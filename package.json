@@ -4,7 +4,8 @@
 	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
-		"server": "node server/index.js",
+		"server": "node --env-file=.env server/index.js",
+		"dev:full": "concurrently \"npm:server\" \"npm:dev\"",
 		"start": "vite",
 		"dev": "vite",
 		"build": "tsc -b && vite build",
@@ -57,6 +58,7 @@
 	"devDependencies": {
 		"@preact/preset-vite": "^2.10.2",
 		"@types/node": "^24.10.4",
+		"concurrently": "^9.2.1",
 		"typescript": "~5.9.3",
 		"vite": "^7.2.4"
 	}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Users, LogOut } from "lucide-preact";
+import { Users, LogOut, ShieldCheck } from "lucide-preact";
 import { clearSession } from "../../utils/session";
 import { useSession } from "../../app/context/SessionContext";
 
@@ -12,6 +12,10 @@ const navItems = [{
 	href: "/",
 	label: "HR",
 	icon: Users,
+}, {
+	href: "/admin",
+	label: "Admin",
+	icon: ShieldCheck,
 }];
 
 /* ---------------- COMPONENT ---------------- */

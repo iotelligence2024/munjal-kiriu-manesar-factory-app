@@ -11,16 +11,13 @@ const hrCards = [
 	},
 ];
 
-const MODULE_STRIP_COLUMNS = 6;
-
 export default function DashboardPage() {
 	return (
 		<div className="dashboard-glass flex min-h-0 flex-1 flex-col overflow-hidden p-3 md:p-5">
 			<div className="rounded-[1.4rem] border border-[rgba(191,219,254,0.45)] bg-[linear-gradient(165deg,rgba(224,231,255,0.85),rgba(219,234,254,0.82))] p-3 md:p-4">
-				<div className="overflow-x-auto">
+				<div className="min-w-0 overflow-x-hidden">
 					<div
-						className="grid min-w-[1200px] gap-3"
-						style={{ gridTemplateColumns: `repeat(${MODULE_STRIP_COLUMNS}, minmax(0, 1fr))` }}
+						className="grid min-w-0 gap-3 grid-cols-1 sm:grid-cols-2"
 					>
 					{hrCards.map((item) => (
 						<Link

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
 	Activity,
@@ -11,17 +11,23 @@ import {
 } from "lucide-preact";
 
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
 import {
 	Dialog,
 	DialogContent,
-	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "../components/ui/select";
 import clientLogo from "../assets/clientLogo.png";
 import { useSession } from "./context/SessionContext";
 import { setSession } from "../utils/session";
@@ -39,10 +45,25 @@ const glassCardClassName =
 	"dashboard-glass relative overflow-hidden rounded-[1.8rem] border border-[rgba(30,64,175,0.16)] shadow-[0_24px_64px_rgba(15,23,42,0.1)]";
 
 const fieldShellClassName =
-	"rounded-[1.1rem] border border-[rgba(59,130,246,0.14)] bg-[linear-gradient(180deg,rgba(255,255,255,0.97),rgba(231,239,250,0.94))] px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-[border-color,box-shadow] focus-within:border-[rgba(30,64,175,0.2)] focus-within:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]";
+	"overflow-hidden rounded-[1.1rem] border border-[rgba(15,23,42,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.97),rgba(245,247,250,0.94))] px-4";
 
 const loginInputClassName =
-	"h-12 border-0 bg-transparent px-0 text-sm text-[#17181d] placeholder:text-[#97a0ab] shadow-none outline-none ring-0 focus:border-0 focus:bg-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:bg-transparent disabled:shadow-none autofill:border-0 autofill:bg-transparent autofill:shadow-[inset_0_0_0px_1000px_transparent] autofill:[-webkit-text-fill-color:#17181d]";
+	"h-12 !rounded-none !border-0 !bg-transparent px-0 text-sm text-[#17181d] placeholder:text-[#97a0ab] !shadow-none outline-none !ring-0 focus:!border-0 focus:!bg-transparent focus:outline-none focus:!ring-0 focus:!shadow-none focus-visible:outline-none focus-visible:!ring-0 focus-visible:ring-offset-0 focus-visible:!shadow-none disabled:!bg-transparent disabled:!shadow-none autofill:!border-0 autofill:!bg-transparent autofill:shadow-[inset_0_0_0px_1000px_transparent] autofill:[-webkit-text-fill-color:#17181d]";
+
+const secondaryActionButtonClassName =
+	"h-11 w-full rounded-[1rem] border border-[rgba(30,64,175,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(232,240,250,0.86))] text-[#1e3a8a] shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_10px_20px_rgba(15,23,42,0.06)] transition-[background-color,border-color,color,transform,box-shadow] hover:border-[rgba(30,64,175,0.28)] hover:bg-[linear-gradient(180deg,rgba(255,255,255,1),rgba(226,236,249,0.96))] hover:text-[#1e3a8a] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.96),0_14px_28px_rgba(30,64,175,0.12)] focus-visible:ring-[rgba(30,64,175,0.28)]";
+
+const signupDialogClassName =
+	"max-h-[calc(100vh-2rem)] overflow-hidden border-[rgba(30,64,175,0.16)] bg-[linear-gradient(180deg,rgba(252,253,255,0.98),rgba(235,243,251,0.98))] p-0 shadow-[0_30px_80px_rgba(15,23,42,0.2)] sm:max-w-[min(92vw,52rem)]";
+
+const signupSectionClassName =
+	"rounded-[1.2rem] border border-[rgba(59,130,246,0.12)] bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(232,240,250,0.82))] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.92)]";
+
+const signupInputShellClassName =
+	"overflow-hidden rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.9))] px-4";
+
+const signupInputClassName =
+	"h-10 sm:h-11 !rounded-none !border-0 !bg-transparent px-0 text-sm text-[#17181d] placeholder:text-[#8c98a8] !shadow-none outline-none !ring-0 focus:!bg-transparent focus:outline-none focus:!ring-0 focus:!border-0 focus:!shadow-none focus-visible:outline-none focus-visible:!ring-0 focus-visible:ring-offset-0 focus-visible:!shadow-none";
 
 const POST_LOGIN_REDIRECT_KEY = "post_login_redirect";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:54321";
@@ -51,8 +72,23 @@ type SignupForm = {
 	employeeName: string;
 	employeeCode: string;
 	department: string;
+	role: string;
+	email: string;
+	mobileNumber: string;
 	username: string;
 	password: string;
+};
+
+type MasterItem = {
+	id: string;
+	name: string;
+};
+
+const flatInputStyle = {
+	border: "none",
+	outline: "none",
+	boxShadow: "none",
+	WebkitBoxShadow: "none",
 };
 
 export default function LoginPage() {
@@ -68,13 +104,47 @@ export default function LoginPage() {
 	const [signupLoading, setSignupLoading] = useState(false);
 	const [signupError, setSignupError] = useState<string | null>(null);
 	const [signupSuccess, setSignupSuccess] = useState<string | null>(null);
+	const [departmentOptions, setDepartmentOptions] = useState<MasterItem[]>([]);
+	const [roleOptions, setRoleOptions] = useState<MasterItem[]>([]);
 	const [signupForm, setSignupForm] = useState<SignupForm>({
 		employeeName: "",
 		employeeCode: "",
 		department: "",
+		role: "",
+		email: "",
+		mobileNumber: "",
 		username: "",
 		password: "",
 	});
+
+	useEffect(() => {
+		const loadMasterOptions = async () => {
+			try {
+				const [departmentResponse, roleResponse] = await Promise.all([
+					fetch(`${API_BASE_URL}/api/department-master`),
+					fetch(`${API_BASE_URL}/api/role-master`),
+				]);
+
+				const [departmentPayload, rolePayload] = await Promise.all([
+					departmentResponse.json().catch(() => null),
+					roleResponse.json().catch(() => null),
+				]);
+
+				if (departmentResponse.ok) {
+					setDepartmentOptions(Array.isArray(departmentPayload?.items) ? departmentPayload.items : []);
+				}
+
+				if (roleResponse.ok) {
+					setRoleOptions(Array.isArray(rolePayload?.items) ? rolePayload.items : []);
+				}
+			} catch {
+				setDepartmentOptions([]);
+				setRoleOptions([]);
+			}
+		};
+
+		void loadMasterOptions();
+	}, []);
 
 	const getRedirectPath = () => {
 		const navigationState = location.state as
@@ -119,6 +189,9 @@ export default function LoginPage() {
 			employeeName: "",
 			employeeCode: "",
 			department: "",
+			role: "",
+			email: "",
+			mobileNumber: "",
 			username: username.trim(),
 			password: "",
 		});
@@ -176,7 +249,13 @@ export default function LoginPage() {
 
 			navigate(getRedirectPath(), { replace: true });
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Login failed");
+			setError(
+				err instanceof TypeError
+					? "Authentication server is not reachable. Start the backend and try again."
+					: err instanceof Error
+						? err.message
+						: "Login failed"
+			);
 		} finally {
 			setLoading(false);
 		}
@@ -206,7 +285,13 @@ export default function LoginPage() {
 			setPassword("");
 			setSignupSuccess(payload?.message ?? "Signup request submitted.");
 		} catch (err) {
-			setSignupError(err instanceof Error ? err.message : "Unable to submit signup request.");
+			setSignupError(
+				err instanceof TypeError
+					? "Authentication server is not reachable. Start the backend and try again."
+					: err instanceof Error
+						? err.message
+						: "Unable to submit signup request."
+			);
 		} finally {
 			setSignupLoading(false);
 		}
@@ -224,11 +309,7 @@ export default function LoginPage() {
 						<Card className={glassCardClassName}>
 							<div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(30,64,175,0.92),rgba(2,132,199,0.84),rgba(13,148,136,0.78))]" />
 							<CardContent className="relative flex h-full flex-col justify-between gap-8 p-6 sm:p-8">
-								<div className="space-y-7">
-									<div className="inline-flex items-center gap-2 rounded-full border border-[rgba(30,64,175,0.16)] bg-white/86 px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-[#1d4ed8] shadow-sm">
-										<span className="h-2 w-2 rounded-full bg-[#1d4ed8]" />
-										Maintenance 2.0
-									</div>
+								<div className="space-y-7 my-3">
 
 									<div className="space-y-5">
 										<div className="inline-flex items-center justify-center rounded-[1.2rem] border border-[rgba(30,64,175,0.14)] bg-white px-5 py-3 shadow-[0_12px_24px_rgba(15,23,42,0.08)]">
@@ -276,18 +357,12 @@ export default function LoginPage() {
 						<Card className={glassCardClassName}>
 							<div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(30,64,175,0.92),rgba(2,132,199,0.84),rgba(13,148,136,0.78))]" />
 							<CardHeader className="relative border-b border-[rgba(30,64,175,0.12)] bg-[linear-gradient(180deg,rgba(248,250,255,0.96),rgba(226,236,249,0.82))] p-6 sm:p-7">
-								<div className="inline-flex w-fit items-center rounded-full border border-[rgba(30,64,175,0.16)] bg-white/86 px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-[#1d4ed8] shadow-sm">
-									Secure Access
-								</div>
 								<CardTitle
 									className="pt-3 text-3xl tracking-[-0.03em] text-[#17181d]"
 									style={{ fontFamily: "\"Space Grotesk\", sans-serif" }}
 								>
 									Sign in
 								</CardTitle>
-								<CardDescription className="max-w-sm text-sm leading-6 text-[#5f6772]">
-									Continue to the Subros Maintenance 2.0 workspace with your assigned credentials.
-								</CardDescription>
 							</CardHeader>
 
 							<form onSubmit={handleLogin} className="relative">
@@ -307,6 +382,7 @@ export default function LoginPage() {
 												autoComplete="username"
 												disabled={loading}
 												className={loginInputClassName}
+												style={flatInputStyle}
 											/>
 										</div>
 									</div>
@@ -327,6 +403,7 @@ export default function LoginPage() {
 												autoComplete="current-password"
 												disabled={loading}
 												className={loginInputClassName}
+												style={flatInputStyle}
 											/>
 										</div>
 									</div>
@@ -361,9 +438,9 @@ export default function LoginPage() {
 										type="button"
 										variant="outline"
 										onClick={openSignupModal}
-										className="h-11 w-full rounded-[1rem] border-[rgba(30,64,175,0.18)] bg-white/80 text-[#1e3a8a] hover:bg-white"
+										className={secondaryActionButtonClassName}
 									>
-										Request new account
+										Request New Account
 									</Button>
 								</CardFooter>
 							</form>
@@ -381,86 +458,194 @@ export default function LoginPage() {
 					}
 				}}
 			>
-				<DialogContent className="border-[rgba(30,64,175,0.16)] bg-[linear-gradient(180deg,#fbfdff_0%,#edf4fb_100%)] sm:max-w-xl">
-					<DialogHeader>
-						<DialogTitle>Create your user master entry</DialogTitle>
-						<DialogDescription>
-							Your account will be saved in the user master with <span className="font-semibold">approved = false</span>. IT must approve it before login is allowed.
-						</DialogDescription>
+				<DialogContent className={signupDialogClassName}>
+					<div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(30,64,175,0.92),rgba(2,132,199,0.84),rgba(13,148,136,0.78))]" />
+					<div className="pointer-events-none absolute right-[-3rem] top-[-3rem] h-32 w-32 rounded-full bg-[rgba(30,64,175,0.12)] blur-3xl" />
+					<div className="pointer-events-none absolute bottom-[-2rem] left-[-2rem] h-28 w-28 rounded-full bg-[rgba(8,145,178,0.14)] blur-3xl" />
+
+					<DialogHeader className="border-b border-[rgba(30,64,175,0.1)] bg-[linear-gradient(180deg,rgba(248,250,255,0.96),rgba(226,236,249,0.84))] px-6 py-6 sm:px-7">
+						<DialogTitle
+							className="pt-3 text-2xl tracking-[-0.03em] text-[#17181d]"
+							style={{ fontFamily: "\"Space Grotesk\", sans-serif" }}
+						>
+							Create your user master entry
+						</DialogTitle>
 					</DialogHeader>
 
-					<form onSubmit={handleSignup} className="space-y-4">
-						<div className="grid gap-4 sm:grid-cols-2">
-							<div className="space-y-2 sm:col-span-2">
-								<Label>Employee Name</Label>
-								<Input
-									value={signupForm.employeeName}
-									onChange={(e) => updateSignupField("employeeName", e.currentTarget.value)}
-									placeholder="Enter employee name"
-									disabled={signupLoading}
-								/>
+					<form onSubmit={handleSignup} className="flex max-h-[calc(100vh-10rem)] flex-col gap-4 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+						<div className={signupSectionClassName}>
+							<div className="mb-3">
+								<p className="text-sm font-semibold text-[#1f2937]">User details</p>
+								<p className="mt-1 text-xs text-[#64748b]">Fill all required information here to create your account request.</p>
 							</div>
 
-							<div className="space-y-2">
-								<Label>Employee Code</Label>
-								<Input
-									value={signupForm.employeeCode}
-									onChange={(e) => updateSignupField("employeeCode", e.currentTarget.value)}
-									placeholder="Enter employee code"
-									disabled={signupLoading}
-								/>
-							</div>
+							<div className="grid gap-3 sm:grid-cols-2">
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Employee Name</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											value={signupForm.employeeName}
+											onChange={(e) => updateSignupField("employeeName", e.currentTarget.value)}
+											placeholder="Enter employee name"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
 
-							<div className="space-y-2">
-								<Label>Department</Label>
-								<Input
-									value={signupForm.department}
-									onChange={(e) => updateSignupField("department", e.currentTarget.value)}
-									placeholder="Enter department"
-									disabled={signupLoading}
-								/>
-							</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Employee Code</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											value={signupForm.employeeCode}
+											onChange={(e) => updateSignupField("employeeCode", e.currentTarget.value)}
+											placeholder="Enter employee code"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
 
-							<div className="space-y-2">
-								<Label>Username</Label>
-								<Input
-									value={signupForm.username}
-									onChange={(e) => updateSignupField("username", e.currentTarget.value)}
-									placeholder="Choose username"
-									disabled={signupLoading}
-								/>
-							</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Department</Label>
+									<div className={signupInputShellClassName}>
+										<Select
+											value={signupForm.department}
+											onValueChange={(value) => updateSignupField("department", value)}
+											disabled={signupLoading || departmentOptions.length === 0}
+										>
+											<SelectTrigger
+												className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0"
+											>
+												<SelectValue
+													placeholder={
+														departmentOptions.length === 0
+															? "No departments available"
+															: "Select department"
+													}
+												/>
+											</SelectTrigger>
+											<SelectContent>
+												{departmentOptions.map((item) => (
+													<SelectItem key={item.id} value={item.name}>
+														{item.name}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
 
-							<div className="space-y-2">
-								<Label>Password</Label>
-								<Input
-									type="password"
-									value={signupForm.password}
-									onChange={(e) => updateSignupField("password", e.currentTarget.value)}
-									placeholder="Choose password"
-									disabled={signupLoading}
-								/>
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Role</Label>
+									<div className={signupInputShellClassName}>
+										<Select
+											value={signupForm.role}
+											onValueChange={(value) => updateSignupField("role", value)}
+											disabled={signupLoading || roleOptions.length === 0}
+										>
+											<SelectTrigger
+												className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0"
+											>
+												<SelectValue
+													placeholder={
+														roleOptions.length === 0
+															? "No roles available"
+															: "Select role"
+													}
+												/>
+											</SelectTrigger>
+											<SelectContent>
+												{roleOptions.map((item) => (
+													<SelectItem key={item.id} value={item.name}>
+														{item.name}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
+
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Email</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											type="email"
+											value={signupForm.email}
+											onChange={(e) => updateSignupField("email", e.currentTarget.value)}
+											placeholder="Enter email address"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
+
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Mobile Number</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											value={signupForm.mobileNumber}
+											onChange={(e) => updateSignupField("mobileNumber", e.currentTarget.value)}
+											placeholder="Enter mobile number"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Username</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											value={signupForm.username}
+											onChange={(e) => updateSignupField("username", e.currentTarget.value)}
+											placeholder="Choose username"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
+
+								<div className="space-y-2">
+									<Label className="text-sm font-medium text-[#4d5560]">Password</Label>
+									<div className={signupInputShellClassName}>
+										<Input
+											type="password"
+											value={signupForm.password}
+											onChange={(e) => updateSignupField("password", e.currentTarget.value)}
+											placeholder="Choose password"
+											disabled={signupLoading}
+											className={signupInputClassName}
+											style={flatInputStyle}
+										/>
+									</div>
+								</div>
 							</div>
 						</div>
 
 						{signupError && (
-							<div className="rounded-[1rem] border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">
+							<div className="rounded-[1rem] border border-[rgba(220,38,38,0.2)] bg-[linear-gradient(180deg,rgba(254,242,242,0.96),rgba(254,226,226,0.86))] px-4 py-3 text-sm text-[#b91c1c] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
 								{signupError}
 							</div>
 						)}
 
 						{signupSuccess && (
-							<div className="rounded-[1rem] border border-[rgba(5,150,105,0.25)] bg-[rgba(16,185,129,0.12)] px-4 py-3 text-sm text-[#047857]">
+							<div className="rounded-[1rem] border border-[rgba(5,150,105,0.2)] bg-[linear-gradient(180deg,rgba(236,253,245,0.96),rgba(209,250,229,0.82))] px-4 py-3 text-sm text-[#047857] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
 								{signupSuccess}
 							</div>
 						)}
 
-						<DialogFooter className="gap-3">
+						<DialogFooter className="border-t border-[rgba(30,64,175,0.1)] bg-[linear-gradient(180deg,rgba(248,250,255,0.6),rgba(232,240,250,0.82))] px-0 pt-5">
 							<Button
 								type="button"
 								variant="outline"
 								onClick={() => setSignupOpen(false)}
 								disabled={signupLoading}
+								className="rounded-[1rem] border border-[rgba(30,64,175,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(231,239,250,0.9))] text-[#1e3a8a] shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_10px_20px_rgba(15,23,42,0.06)] transition-[background-color,border-color,color,box-shadow] hover:border-[rgba(30,64,175,0.28)] hover:bg-[linear-gradient(180deg,rgba(255,255,255,1),rgba(226,236,249,0.96))] hover:text-[#1d4ed8] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.96),0_14px_28px_rgba(30,64,175,0.1)]"
 							>
 								Close
 							</Button>
@@ -471,9 +656,13 @@ export default function LoginPage() {
 									!signupForm.employeeName.trim() ||
 									!signupForm.employeeCode.trim() ||
 									!signupForm.department.trim() ||
+									!signupForm.role.trim() ||
+									!signupForm.email.trim() ||
+									!signupForm.mobileNumber.trim() ||
 									!signupForm.username.trim() ||
 									!signupForm.password
 								}
+								className="rounded-[1rem] border border-[rgba(30,64,175,0.16)] bg-[linear-gradient(135deg,#1e40af,#0284c7,#0f766e)] px-6 text-white shadow-[0_14px_28px_rgba(30,64,175,0.22)] hover:bg-[linear-gradient(135deg,#1d3a9a,#0369a1,#115e59)]"
 							>
 								{signupLoading ? "Submitting..." : "Create request"}
 							</Button>
