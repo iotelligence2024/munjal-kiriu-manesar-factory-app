@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-	Activity,
-	AlertTriangle,
+	// Activity,
+	// AlertTriangle,
 	ArrowRight,
-	CalendarCheck,
-	Factory,
-	Package,
-	Wrench,
+	// CalendarCheck,
+	// Factory,
+	// Package,
+	// Wrench,
 } from "lucide-preact";
 
 import { Button } from "../components/ui/button";
@@ -32,14 +32,14 @@ import clientLogo from "../assets/clientLogo.png";
 import { useSession } from "./context/SessionContext";
 import { setSession } from "../utils/session";
 
-const moduleHighlights = [
-	{ label: "Mould PM", icon: CalendarCheck },
-	{ label: "Fixture PM", icon: Wrench },
-	{ label: "Production", icon: Factory },
-	{ label: "Mould Health", icon: Activity },
-	{ label: "Spare", icon: Package },
-	{ label: "Downtime", icon: AlertTriangle },
-];
+// const moduleHighlights = [
+// 	{ label: "Digital Checksheets", icon: CalendarCheck },
+// 	{ label: "Maintenance", icon: Wrench },
+// 	{ label: "Production Monitoring", icon: Factory },
+// 	{ label: "Machine Health", icon: Activity },
+// 	{ label: "Inventory & Spares", icon: Package },
+// 	{ label: "Downtime Tracking", icon: AlertTriangle },
+// ];
 
 const glassCardClassName =
 	"dashboard-glass relative overflow-hidden rounded-[1.8rem] border border-[rgba(30,64,175,0.16)] shadow-[0_24px_64px_rgba(15,23,42,0.1)]";
@@ -325,15 +325,15 @@ export default function LoginPage() {
 												className="text-3xl font-semibold tracking-[-0.03em] text-[#17181d] sm:text-4xl"
 												style={{ fontFamily: "\"Space Grotesk\", sans-serif" }}
 											>
-												Control maintenance and asset readiness from one dashboard.
+												One connected IIoT dashboard for factory operations, quality and approvals.
 											</h1>
 											<p className="max-w-lg text-sm leading-6 text-[#5f6772] sm:text-base">
-												Access the same live planning, mould health, breakdown and spare experience through a single sign-in.
+												Monitor production activity, manage digital checksheets, track downtime, and keep plant teams aligned through a single secure sign-in.
 											</p>
 										</div>
 									</div>
 
-									<div className="grid gap-3 sm:grid-cols-2">
+									{/* <div className="grid gap-3 sm:grid-cols-2">
 										{moduleHighlights.map(({ label, icon: Icon }) => (
 											<div
 												key={label}
@@ -349,7 +349,7 @@ export default function LoginPage() {
 												</div>
 											</div>
 										))}
-									</div>
+									</div> */}
 								</div>
 							</CardContent>
 						</Card>
@@ -363,6 +363,9 @@ export default function LoginPage() {
 								>
 									Sign in
 								</CardTitle>
+								<p className="mt-2 text-sm text-[#5f6772]">
+									Access your factory dashboard workspace with your assigned username and password.
+								</p>
 							</CardHeader>
 
 							<form onSubmit={handleLogin} className="relative">
@@ -428,7 +431,7 @@ export default function LoginPage() {
 											</span>
 										) : (
 											<span className="inline-flex items-center gap-2">
-												Open dashboard
+												Open IIoT Dashboard
 												<ArrowRight className="h-4 w-4" />
 											</span>
 										)}

@@ -135,6 +135,10 @@ const checksheetMappingValueSchema = new mongoose.Schema(
 			type: Boolean,
 			default: false,
 		},
+		mandatory: {
+			type: Boolean,
+			default: false,
+		},
 	},
 	{ _id: false }
 );
@@ -146,7 +150,12 @@ const checksheetMasterSchema = new mongoose.Schema(
 			required: true,
 			trim: true,
 		},
-		category: {
+		"line-name": {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		model: {
 			type: String,
 			required: true,
 			trim: true,
@@ -193,6 +202,129 @@ const checksheetMasterSchema = new mongoose.Schema(
 const ChecksheetMaster =
 	mongoose.models.ChecksheetMaster ||
 	mongoose.model("ChecksheetMaster", checksheetMasterSchema);
+
+const checksheetDataSchema = new mongoose.Schema(
+	{
+		"checksheet-id": {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		"checksheet-name": {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		"line-name": {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		model: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		date: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		month: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		status: {
+			type: String,
+			trim: true,
+			default: "pending",
+		},
+		approval: {
+			type: String,
+			trim: true,
+			default: "not_started",
+		},
+		approvalFlow: {
+			type: mongoose.Schema.Types.Mixed,
+			default: {},
+		},
+		approvalHistory: [
+			{
+				stage: { type: String, trim: true, default: "" },
+				action: { type: String, trim: true, default: "" },
+				actorUsername: { type: String, trim: true, default: "" },
+				actorName: { type: String, trim: true, default: "" },
+				actedAt: { type: Date, default: null },
+				remarks: { type: String, trim: true, default: "" },
+				statusAfterAction: { type: String, trim: true, default: "" },
+			},
+		],
+		"check-points-mapping": {
+			type: mongoose.Schema.Types.Mixed,
+			default: {},
+		},
+		"check-points": {
+			type: [mongoose.Schema.Types.Mixed],
+			default: [],
+		},
+	},
+	{
+		collection: "checksheet-data",
+		timestamps: true,
+		versionKey: false,
+	}
+);
+
+checksheetDataSchema.index(
+	{ "checksheet-id": 1, date: 1 },
+	{ unique: true }
+);
+
+const ChecksheetData =
+	mongoose.models.ChecksheetData ||
+	mongoose.model("ChecksheetData", checksheetDataSchema);
+
+const createEmptyChecksheetApprovalStage = () => ({
+	approved: false,
+	queried: false,
+	action: "",
+	approvedByUsername: "",
+	approvedByName: "",
+	approvedAt: null,
+	remarks: "",
+});
+
+const createApprovalStageKey = (department, role) => {
+	const normalize = (value) =>
+		String(value ?? "")
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "_")
+			.replace(/^_+|_+$/g, "");
+
+	return `${normalize(department)}__${normalize(role)}`;
+};
+
+const buildChecksheetApprovalFlow = (authorization, currentApprovalFlow = {}) => {
+	const nextApprovalFlow =
+		currentApprovalFlow && typeof currentApprovalFlow === "object"
+			? { ...currentApprovalFlow }
+			: {};
+
+	Object.entries(authorization ?? {}).forEach(([department, roles]) => {
+		Object.entries(roles ?? {}).forEach(([role, details]) => {
+			if (!details?.enable) return;
+
+			const stageKey = createApprovalStageKey(department, role);
+			if (!nextApprovalFlow[stageKey] || typeof nextApprovalFlow[stageKey] !== "object") {
+				nextApprovalFlow[stageKey] = createEmptyChecksheetApprovalStage();
+			}
+		});
+	});
+
+	return nextApprovalFlow;
+};
 
 const approvalStageSchema = {
 	approved: { type: Boolean, default: false },
@@ -421,7 +553,8 @@ function sanitizeChecksheet(document) {
 	return {
 		id: document._id.toString(),
 		name: document.name ?? "",
-		category: document.category ?? "",
+		"line-name": document["line-name"] ?? "",
+		model: document.model ?? "",
 		"revision-no": Number(document["revision-no"] ?? 1),
 		"revision-date": document["revision-date"] ?? "",
 		status: document.status ?? "active",
@@ -432,6 +565,56 @@ function sanitizeChecksheet(document) {
 		"check-points": Array.isArray(document["check-points"]) ? document["check-points"] : [],
 		authorization: document.authorization ?? {},
 		"revision-history": document["revision-history"] ?? {},
+		createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
+		updatedAt: document.updatedAt instanceof Date ? document.updatedAt.toISOString() : "",
+	};
+}
+
+function sanitizeChecksheetData(document) {
+	const rawApprovalFlow =
+		document.approvalFlow && typeof document.approvalFlow === "object"
+			? document.approvalFlow
+			: {};
+	const approvalFlow = Object.entries(rawApprovalFlow).reduce((accumulator, [stageKey, stageValue]) => {
+		accumulator[stageKey] = {
+			approved: Boolean(stageValue?.approved),
+			queried: Boolean(stageValue?.queried),
+			action: stageValue?.action ?? "",
+			approvedByUsername: stageValue?.approvedByUsername ?? "",
+			approvedByName: stageValue?.approvedByName ?? "",
+			approvedAt:
+				stageValue?.approvedAt instanceof Date
+					? stageValue.approvedAt.toISOString()
+					: "",
+			remarks: stageValue?.remarks ?? "",
+		};
+		return accumulator;
+	}, {});
+
+	return {
+		id: document._id.toString(),
+		"checksheet-id": document["checksheet-id"] ?? "",
+		"checksheet-name": document["checksheet-name"] ?? "",
+		"line-name": document["line-name"] ?? "",
+		model: document.model ?? "",
+		date: document.date ?? "",
+		month: document.month ?? "",
+		status: document.status ?? "pending",
+		approval: document.approval ?? "not_started",
+		approvalFlow,
+		approvalHistory: Array.isArray(document.approvalHistory)
+			? document.approvalHistory.map((entry) => ({
+					stage: entry?.stage ?? "",
+					action: entry?.action ?? "",
+					actorUsername: entry?.actorUsername ?? "",
+					actorName: entry?.actorName ?? "",
+					actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
+					remarks: entry?.remarks ?? "",
+					statusAfterAction: entry?.statusAfterAction ?? "",
+				}))
+			: [],
+		"check-points-mapping": document["check-points-mapping"] ?? {},
+		"check-points": Array.isArray(document["check-points"]) ? document["check-points"] : [],
 		createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
 		updatedAt: document.updatedAt instanceof Date ? document.updatedAt.toISOString() : "",
 	};
@@ -843,17 +1026,18 @@ app.post("/api/checksheet-master", async (req, res) => {
 	try {
 		const {
 			name,
-			category,
+			"line-name": lineName,
+			model,
 			status,
 			authorization,
 			"check-points-mapping": checkPointsMapping,
 			"check-points": checkPoints,
 		} = req.body ?? {};
 
-		if (!name || !String(name).trim() || !category || !String(category).trim()) {
+		if (!name || !String(name).trim() || !lineName || !String(lineName).trim() || !model || !String(model).trim()) {
 			return res.status(400).json({
 				ok: false,
-				message: "Checksheet name and category are required.",
+				message: "Checksheet name, line name and model are required.",
 			});
 		}
 
@@ -877,7 +1061,8 @@ app.post("/api/checksheet-master", async (req, res) => {
 				"revision-date": revisionDate,
 				status: normalizedStatus,
 				name: String(name).trim(),
-				category: String(category).trim(),
+				"line-name": String(lineName).trim(),
+				model: String(model).trim(),
 				"check-points-mapping": checkPointsMapping,
 				"check-points": Array.isArray(checkPoints) ? checkPoints : [],
 				authorization: authorization && typeof authorization === "object" ? authorization : {},
@@ -886,7 +1071,8 @@ app.post("/api/checksheet-master", async (req, res) => {
 
 		const createdChecksheet = await ChecksheetMaster.create({
 			name: String(name).trim(),
-			category: String(category).trim(),
+			"line-name": String(lineName).trim(),
+			model: String(model).trim(),
 			"revision-no": revisionNo,
 			"revision-date": revisionDate,
 			status: normalizedStatus,
@@ -956,7 +1142,8 @@ app.patch("/api/checksheet-master/:id", async (req, res) => {
 			"revision-date": nextRevisionDate,
 			status: normalizedStatus,
 			name: checksheet.name,
-			category: checksheet.category,
+			"line-name": checksheet["line-name"],
+			model: checksheet.model,
 			"check-points-mapping": checkPointsMapping,
 			"check-points": Array.isArray(checkPoints) ? checkPoints : [],
 			authorization: authorization && typeof authorization === "object" ? authorization : {},
@@ -981,6 +1168,248 @@ app.patch("/api/checksheet-master/:id", async (req, res) => {
 		return res.status(500).json({
 			ok: false,
 			message: error instanceof Error ? error.message : "Unable to update checksheet.",
+		});
+	}
+});
+
+app.get("/api/checksheet-data", async (req, res) => {
+	try {
+		await connectToDatabase();
+
+		const filters = {};
+		const lineName = String(req.query["line-name"] ?? "").trim();
+		const date = String(req.query.date ?? "").trim();
+		const month = String(req.query.month ?? "").trim();
+
+		if (lineName) {
+			filters["line-name"] = lineName;
+		}
+
+		if (date) {
+			filters.date = date;
+		} else if (month) {
+			filters.month = month;
+		}
+
+		const items = await ChecksheetData.find(filters).sort({ updatedAt: -1, createdAt: -1 });
+
+		return res.status(200).json({
+			ok: true,
+			items: items.map(sanitizeChecksheetData),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to load checksheet data.",
+		});
+	}
+});
+
+app.post("/api/checksheet-data", async (req, res) => {
+	try {
+		const {
+			"checksheet-id": checksheetId,
+			"checksheet-name": checksheetName,
+			"line-name": lineName,
+			model,
+			date,
+			month,
+			status,
+			approval,
+			authorization,
+			"check-points-mapping": checkPointsMapping,
+			"check-points": checkPoints,
+		} = req.body ?? {};
+
+		if (!checksheetId || !String(checksheetId).trim() || !date || !String(date).trim()) {
+			return res.status(400).json({
+				ok: false,
+				message: "Checksheet id and date are required.",
+			});
+		}
+
+		await connectToDatabase();
+
+		const normalizedStatus =
+			String(status ?? "").trim().toLowerCase() === "completed" ? "completed" : "in_progress";
+		const normalizedApproval =
+			normalizedStatus === "completed"
+				? String(approval ?? "not_started").trim().toLowerCase() || "not_started"
+				: "not_started";
+		const existingItem = await ChecksheetData.findOne({
+			"checksheet-id": String(checksheetId).trim(),
+			date: String(date).trim(),
+		});
+		const hadQueryRaised = Object.values(existingItem?.approvalFlow ?? {}).some(
+			(stageValue) =>
+				stageValue &&
+				typeof stageValue === "object" &&
+				(Boolean(stageValue.queried) || stageValue.action === "query")
+		);
+
+		const approvalFlow = hadQueryRaised
+			? buildChecksheetApprovalFlow(
+					authorization && typeof authorization === "object" ? authorization : {},
+					{}
+			  )
+			: buildChecksheetApprovalFlow(
+					authorization && typeof authorization === "object" ? authorization : {},
+					existingItem?.approvalFlow
+			  );
+		const approvalHistory = Array.isArray(existingItem?.approvalHistory)
+			? existingItem.approvalHistory
+			: [];
+		const nextApprovalHistory =
+			hadQueryRaised && normalizedStatus === "completed"
+				? [
+						...approvalHistory,
+						{
+							stage: "requestor",
+							action: "resubmitted",
+							actorUsername: "",
+							actorName: String(checksheetName ?? "").trim(),
+							actedAt: new Date(),
+							remarks: "Checksheet resubmitted after query raised.",
+							statusAfterAction: "completed",
+						},
+				  ]
+				: approvalHistory;
+
+		const item = await ChecksheetData.findOneAndUpdate(
+			{
+				"checksheet-id": String(checksheetId).trim(),
+				date: String(date).trim(),
+			},
+			{
+				$set: {
+					"checksheet-id": String(checksheetId).trim(),
+					"checksheet-name": String(checksheetName ?? "").trim(),
+					"line-name": String(lineName ?? "").trim(),
+					model: String(model ?? "").trim(),
+					date: String(date).trim(),
+					month: String(month ?? "").trim(),
+					status: normalizedStatus,
+					approval: normalizedApproval,
+					approvalFlow,
+					approvalHistory: nextApprovalHistory,
+					"check-points-mapping":
+						checkPointsMapping && typeof checkPointsMapping === "object" ? checkPointsMapping : {},
+					"check-points": Array.isArray(checkPoints) ? checkPoints : [],
+				},
+			},
+			{
+				new: true,
+				upsert: true,
+				setDefaultsOnInsert: true,
+			}
+		);
+
+		return res.status(200).json({
+			ok: true,
+			message:
+				normalizedStatus === "completed"
+					? "Checksheet submitted successfully."
+					: "Draft saved successfully.",
+			item: sanitizeChecksheetData(item),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to save checksheet data.",
+		});
+	}
+});
+
+app.patch("/api/checksheet-data/:id/approve", async (req, res) => {
+	try {
+		const { id } = req.params;
+		const { stage, action, actorUsername, actorName, remarks } = req.body ?? {};
+
+		if (!stage || !action || !actorUsername) {
+			return res.status(400).json({
+				ok: false,
+				message: "Approval stage, action and actor username are required.",
+			});
+		}
+
+		const currentAction = String(action).trim().toLowerCase();
+		if (!["approve", "query"].includes(currentAction)) {
+			return res.status(400).json({
+				ok: false,
+				message: "Unsupported approval action.",
+			});
+		}
+
+		await connectToDatabase();
+		const document = await ChecksheetData.findById(id);
+
+		if (!document) {
+			return res.status(404).json({
+				ok: false,
+				message: "Checksheet data not found.",
+			});
+		}
+
+		const currentStage = String(stage).trim();
+		const approvedAt = new Date();
+		const remarksValue = String(remarks ?? "").trim();
+		const username = String(actorUsername).trim().toLowerCase();
+		const name = String(actorName ?? "").trim();
+		const currentApprovalFlow =
+			document.approvalFlow && typeof document.approvalFlow === "object"
+				? { ...document.approvalFlow }
+				: {};
+		const existingStage =
+			currentApprovalFlow[currentStage] && typeof currentApprovalFlow[currentStage] === "object"
+				? currentApprovalFlow[currentStage]
+				: {};
+
+		currentApprovalFlow[currentStage] = {
+			...existingStage,
+			approved: currentAction === "approve",
+			queried: currentAction === "query",
+			action: currentAction,
+			approvedByUsername: username,
+			approvedByName: name,
+			approvedAt,
+			remarks: remarksValue,
+		};
+
+		document.approvalFlow = currentApprovalFlow;
+		document.approvalHistory = [
+			...(Array.isArray(document.approvalHistory) ? document.approvalHistory : []),
+			{
+				stage: currentStage,
+				action: currentAction,
+				actorUsername: username,
+				actorName: name,
+				actedAt: approvedAt,
+				remarks: remarksValue,
+				statusAfterAction: currentAction === "approve" ? "approved" : "query_raised",
+			},
+		];
+
+		const approvalStages = Object.values(currentApprovalFlow).filter(
+			(stageValue) => stageValue && typeof stageValue === "object"
+		);
+		const allApproved =
+			approvalStages.length > 0 &&
+			approvalStages.every((stageValue) => Boolean(stageValue.approved));
+
+		document.approval = currentAction === "query" ? "query_raised" : allApproved ? "approved" : "pending";
+		document.status = currentAction === "query" ? "pending" : allApproved ? "approved" : "completed";
+
+		const updatedDocument = await document.save();
+
+		return res.status(200).json({
+			ok: true,
+			message: currentAction === "approve" ? "Checksheet approved successfully." : "Query raised successfully.",
+			item: sanitizeChecksheetData(updatedDocument),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to update checksheet approval.",
 		});
 	}
 });

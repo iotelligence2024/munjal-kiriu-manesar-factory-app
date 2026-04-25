@@ -13,6 +13,9 @@ import ChecksheetMasterPage from "./app/(app)/admin/checksheet-master/page";
 import DepartmentMasterPage from "./app/(app)/admin/department-master/page";
 import RoleMasterPage from "./app/(app)/admin/role-master/page";
 import UserMasterPage from "./app/(app)/admin/user-master/page";
+import QualityPage from "./app/(app)/quality/page";
+import DigitalChecksheetPage from "./app/(app)/quality/digital-checksheet/page";
+import DigitalChecksheetListPage from "./app/(app)/quality/digital-checksheet/list/page";
 
 /* ---------------- ROUTES ---------------- */
 
@@ -45,6 +48,21 @@ const routes = createBrowserRouter([
 				path: "hr/travel-expense-statement",
 				element: <TravelExpenseStatementPage />,
 				handle: { label: "TRAVEL EXPENSE STATEMENT" },
+			},
+			{
+				path: "quality",
+				element: <QualityPage />,
+				handle: { label: "QUALITY" },
+			},
+			{
+				path: "quality/digital-checksheet",
+				element: <DigitalChecksheetPage />,
+				handle: { label: "DIGITAL CHECKSHEET" },
+			},
+			{
+				path: "quality/digital-checksheet/list",
+				element: <DigitalChecksheetListPage />,
+				handle: { label: "DIGITAL CHECKSHEET LIST" },
 			},
 			{
 				path: "admin",

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Users, LogOut, ShieldCheck } from "lucide-preact";
+import { Users, LogOut, ShieldCheck, BadgeCheck } from "lucide-preact";
 import { clearSession } from "../../utils/session";
 import { useSession } from "../../app/context/SessionContext";
 
@@ -12,6 +12,10 @@ const navItems = [{
 	href: "/",
 	label: "HR",
 	icon: Users,
+}, {
+	href: "/quality",
+	label: "Quality",
+	icon: BadgeCheck,
 }, {
 	href: "/admin",
 	label: "Admin",
@@ -58,7 +62,7 @@ export function AppSidebar() {
 			>
 				<SidebarContent
 					className="
-						flex-1
+						flex flex-1 items-center justify-center
 						p-2
 						py-4
 
@@ -71,7 +75,7 @@ export function AppSidebar() {
 						[scrollbar-width:none]
 					"
 				>
-					<SidebarMenu className="flex flex-col items-center gap-3">
+					<SidebarMenu className="flex w-full flex-col items-center justify-center gap-3">
 						{navItems.map((item) => {
 							const Icon = item.icon;
 							const isActive =

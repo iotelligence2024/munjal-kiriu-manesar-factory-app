@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BetweenHorizonalStart, Pencil, Trash2 } from "lucide-preact";
 
 import { Button } from "../../../../components/ui/button";
 import { Checkbox } from "../../../../components/ui/checkbox";
+import {
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from "../../../../components/ui/dialog";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import {
@@ -12,6 +18,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../../../../components/ui/select";
+import { Textarea } from "../../../../components/ui/textarea";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:54321";
 
@@ -27,6 +34,7 @@ type MappingFieldState = {
 	enable: boolean;
 	sequence: number;
 	input: boolean;
+	mandatory: boolean;
 };
 
 type CheckPointRow = {
@@ -46,13 +54,14 @@ type AuthorizationRow = {
 type ChecksheetItem = {
 	id: string;
 	name: string;
-	category: string;
+	"line-name": string;
+	model: string;
 	"revision-no": number;
 	"revision-date": string;
 	status: string;
 	"check-points-mapping": Record<
 		string,
-		{ enable: boolean; name: string; sequence: number; input: boolean }
+		{ enable: boolean; name: string; sequence: number; input: boolean; mandatory: boolean }
 	>;
 	"check-points": Array<Record<string, unknown>>;
 	authorization?: Record<string, Record<string, { enable: boolean; frequency: string }>>;
@@ -61,23 +70,25 @@ type ChecksheetItem = {
 
 type FormState = {
 	name: string;
-	category: string;
+	"line-name": string;
+	model: string;
 	status: string;
 };
 
 const defaultMappingFields: MappingFieldState[] = [
-	{ id: "inspection-items", key: "inspection-items", name: "Inspection Items", enable: true, sequence: 1, input: false },
-	{ id: "standard", key: "standard", name: "Standard", enable: true, sequence: 2, input: false },
-	{ id: "method", key: "method", name: "Method", enable: true, sequence: 3, input: false },
-	{ id: "frequency", key: "frequency", name: "Frequency", enable: true, sequence: 4, input: false },
-	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 5, input: false },
-	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 6, input: true },
-	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 7, input: true },
+	{ id: "inspection-items", key: "inspection-items", name: "Inspection Items", enable: true, sequence: 1, input: false, mandatory: false },
+	{ id: "standard", key: "standard", name: "Standard", enable: true, sequence: 2, input: false, mandatory: false },
+	{ id: "method", key: "method", name: "Method", enable: true, sequence: 3, input: false, mandatory: false },
+	{ id: "frequency", key: "frequency", name: "Frequency", enable: true, sequence: 4, input: false, mandatory: false },
+	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 5, input: false, mandatory: false },
+	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 6, input: true, mandatory: false },
+	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 7, input: true, mandatory: false },
 ];
 
 const emptyForm = (): FormState => ({
 	name: "",
-	category: "",
+	"line-name": "",
+	model: "",
 	status: "active",
 });
 
@@ -97,11 +108,23 @@ const flatInputStyle = {
 };
 const tableInputClassName =
 	"h-9 !border-0 !bg-transparent text-sm !shadow-none outline-none !ring-0 focus:!border-0 focus:outline-none focus:!ring-0 focus:!shadow-none focus-visible:!border-0 focus-visible:outline-none focus-visible:!ring-0 focus-visible:!shadow-none";
+const autoGrowTextareaClassName =
+	"min-h-[2.25rem] resize-none overflow-hidden !border-0 !bg-transparent px-0 py-2 text-sm !shadow-none outline-none !ring-0 focus:!border-0 focus:outline-none focus:!ring-0 focus:!shadow-none focus-visible:!border-0 focus-visible:outline-none focus-visible:!ring-0 focus-visible:!shadow-none";
 const fieldLabelClassName = "text-sm font-medium text-[#4d5560]";
-const tableHeadClassName = "border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700";
-const tableCellClassName = "border border-slate-200 px-3 py-2.5 text-center text-slate-800";
+const tableHeadClassName = "border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700 align-top";
+const tableCellClassName = "border border-slate-200 px-3 py-2.5 text-slate-800 align-top";
+const summaryTableCellClassName = `${tableCellClassName} text-center`;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const formatDisplayDate = (value: string) => {
+	if (!value) return "";
+
+	const [year, month, day] = value.split("-");
+	if (!year || !month || !day) return value;
+
+	return `${day}-${month}-${year}`;
+};
 
 const createMappingField = (
 	sequence: number,
@@ -113,6 +136,7 @@ const createMappingField = (
 	enable: overrides.enable ?? true,
 	sequence,
 	input: overrides.input ?? false,
+	mandatory: overrides.mandatory ?? false,
 });
 
 const buildEmptyCheckPointRow = (mappingFields: MappingFieldState[]): CheckPointRow => {
@@ -148,7 +172,7 @@ const normalizeMappingFields = (fields: MappingFieldState[]) =>
 		}));
 
 const mappingToRows = (
-	mapping: Record<string, { enable: boolean; name: string; sequence: number; input: boolean }> | undefined
+	mapping: Record<string, { enable: boolean; name: string; sequence: number; input: boolean; mandatory?: boolean }> | undefined
 ) => {
 	if (!mapping || Object.keys(mapping).length === 0) {
 		return defaultMappingFields;
@@ -162,6 +186,7 @@ const mappingToRows = (
 				name: value.name ?? "",
 				enable: Boolean(value.enable),
 				input: Boolean(value.input),
+				mandatory: Boolean(value.mandatory),
 				sequence: Number(value.sequence ?? 0),
 			})
 		)
@@ -188,6 +213,52 @@ const authorizationToRows = (
 	return rows.length > 0 ? rows : [buildEmptyAuthorizationRow()];
 };
 
+const AutoGrowTextarea = ({
+	value,
+	onChange,
+	placeholder,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	placeholder?: string;
+}) => {
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const resizeTextarea = () => {
+		const target = textareaRef.current;
+		if (!target) return;
+
+		target.style.height = "auto";
+		target.style.height = `${target.scrollHeight}px`;
+	};
+
+	useEffect(() => {
+		resizeTextarea();
+		const frameId = window.requestAnimationFrame(() => {
+			resizeTextarea();
+		});
+
+		return () => window.cancelAnimationFrame(frameId);
+	}, [value]);
+
+	return (
+		<Textarea
+			ref={textareaRef}
+			rows={1}
+			value={value}
+			placeholder={placeholder}
+			onInput={(event) => {
+				const target = event.currentTarget;
+				target.style.height = "auto";
+				target.style.height = `${target.scrollHeight}px`;
+			}}
+			onFocus={resizeTextarea}
+			onChange={(event) => onChange(event.currentTarget.value)}
+			className={autoGrowTextareaClassName}
+			style={flatInputStyle}
+		/>
+	);
+};
+
 export default function ChecksheetMasterPage() {
 	const [items, setItems] = useState<ChecksheetItem[]>([]);
 	const [departments, setDepartments] = useState<MasterItem[]>([]);
@@ -200,6 +271,7 @@ export default function ChecksheetMasterPage() {
 	const [authorizationRows, setAuthorizationRows] = useState<AuthorizationRow[]>([
 		buildEmptyAuthorizationRow(),
 	]);
+	const [modalOpen, setModalOpen] = useState(false);
 	const [editingId, setEditingId] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
@@ -221,6 +293,7 @@ export default function ChecksheetMasterPage() {
 
 	const autoRevisionNo = activeChecksheet ? Number(activeChecksheet["revision-no"] ?? 1) + 1 : 1;
 	const autoRevisionDate = new Date().toISOString().slice(0, 10);
+	const autoRevisionDateDisplay = formatDisplayDate(autoRevisionDate);
 
 	const loadData = async () => {
 		try {
@@ -277,6 +350,13 @@ export default function ChecksheetMasterPage() {
 		setEditingId("");
 	};
 
+	const handleOpenCreateModal = () => {
+		resetForm();
+		setError(null);
+		setMessage(null);
+		setModalOpen(true);
+	};
+
 	const handleEditExisting = (item: ChecksheetItem) => {
 		const nextMappingFields = mappingToRows(item["check-points-mapping"]);
 		const nextCheckPoints =
@@ -301,7 +381,8 @@ export default function ChecksheetMasterPage() {
 		setEditingId(item.id);
 		setForm({
 			name: item.name ?? "",
-			category: item.category ?? "",
+			"line-name": item["line-name"] ?? "",
+			model: item.model ?? "",
 			status: item.status ?? "active",
 		});
 		setMappingFields(nextMappingFields);
@@ -309,6 +390,7 @@ export default function ChecksheetMasterPage() {
 		setAuthorizationRows(authorizationToRows(item.authorization));
 		setError(null);
 		setMessage(`Editing checksheet "${item.name}".`);
+		setModalOpen(true);
 	};
 
 	const handleFormChange = (field: keyof FormState, value: string) => {
@@ -407,13 +489,14 @@ export default function ChecksheetMasterPage() {
 	};
 
 	const buildPayload = () => {
-		const mappingPayload = enabledMappingFields.reduce<Record<string, { enable: boolean; name: string; sequence: number; input: boolean }>>(
+		const mappingPayload = enabledMappingFields.reduce<Record<string, { enable: boolean; name: string; sequence: number; input: boolean; mandatory: boolean }>>(
 			(accumulator, field) => {
 				accumulator[field.key.trim()] = {
 					enable: field.enable,
 					name: field.name.trim() || field.key.trim(),
 					sequence: field.sequence,
 					input: field.input,
+					mandatory: field.input ? field.mandatory : false,
 				};
 				return accumulator;
 			},
@@ -468,7 +551,7 @@ export default function ChecksheetMasterPage() {
 	};
 
 	const handleSave = async () => {
-		if (!form.name.trim() || !form.category.trim()) return;
+		if (!form.name.trim() || !form["line-name"].trim() || !form.model.trim()) return;
 		if (enabledMappingFields.length === 0) {
 			setError("Enable at least one mapping field before adding check points.");
 			return;
@@ -494,6 +577,7 @@ export default function ChecksheetMasterPage() {
 			}
 
 			resetForm();
+			setModalOpen(false);
 			setMessage(payload?.message ?? (editingId ? "Checksheet updated successfully." : "Checksheet created successfully."));
 			await loadData();
 		} catch (saveError) {
@@ -503,24 +587,11 @@ export default function ChecksheetMasterPage() {
 		}
 	};
 
-	return (
-		<div className={`${summaryShellClassName} space-y-4 overflow-auto`}>
-			<div className="flex items-center justify-between gap-3">
-				<p className="font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
-					Checksheet Master
-				</p>
-				{editingId ? (
-					<Button type="button" variant="outline" onClick={resetForm} className="h-8 rounded-md border-slate-300 bg-white px-3 text-xs text-slate-700">
-						Create New
-					</Button>
-				) : null}
-			</div>
-
+	const renderFormSections = () => (
+		<div className="space-y-4">
 			{error ? <div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{error}</div> : null}
-			{message ? <div className="rounded-xl border border-[rgba(5,150,105,0.2)] bg-[rgba(16,185,129,0.12)] px-4 py-3 text-sm text-[#047857]">{message}</div> : null}
-
 			<div className={sectionClassName}>
-				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
 					<div className="space-y-2">
 						<Label className={fieldLabelClassName}>Name</Label>
 						<div className={inputShellClassName}>
@@ -528,9 +599,15 @@ export default function ChecksheetMasterPage() {
 						</div>
 					</div>
 					<div className="space-y-2">
-						<Label className={fieldLabelClassName}>Category</Label>
+						<Label className={fieldLabelClassName}>Line Name</Label>
 						<div className={inputShellClassName}>
-							<Input value={form.category} disabled={Boolean(editingId)} onChange={(e) => handleFormChange("category", e.currentTarget.value)} className={inputClassName} style={flatInputStyle} />
+							<Input value={form["line-name"]} disabled={Boolean(editingId)} onChange={(e) => handleFormChange("line-name", e.currentTarget.value)} className={inputClassName} style={flatInputStyle} />
+						</div>
+					</div>
+					<div className="space-y-2">
+						<Label className={fieldLabelClassName}>Model</Label>
+						<div className={inputShellClassName}>
+							<Input value={form.model} onChange={(e) => handleFormChange("model", e.currentTarget.value)} className={inputClassName} style={flatInputStyle} />
 						</div>
 					</div>
 					<div className="space-y-2">
@@ -542,7 +619,7 @@ export default function ChecksheetMasterPage() {
 					<div className="space-y-2">
 						<Label className={fieldLabelClassName}>Revision Date</Label>
 						<div className={inputShellClassName}>
-							<Input value={autoRevisionDate} disabled className={inputClassName} style={flatInputStyle} />
+							<Input value={autoRevisionDateDisplay} disabled className={inputClassName} style={flatInputStyle} />
 						</div>
 					</div>
 					<div className="space-y-2">
@@ -575,6 +652,7 @@ export default function ChecksheetMasterPage() {
 								<th className={tableHeadClassName}>Display Name</th>
 								<th className={tableHeadClassName}>Enable</th>
 								<th className={tableHeadClassName}>Input</th>
+								<th className={tableHeadClassName}>Mandatory</th>
 								<th className={tableHeadClassName}>Action</th>
 							</tr>
 						</thead>
@@ -596,6 +674,15 @@ export default function ChecksheetMasterPage() {
 									<td className={tableCellClassName}>
 										<div className="flex justify-center">
 											<Checkbox checked={field.input} onCheckedChange={(checked) => handleMappingChange(field.id, "input", checked === true)} />
+										</div>
+									</td>
+									<td className={tableCellClassName}>
+										<div className="flex justify-center">
+											<Checkbox
+												checked={field.input && field.mandatory}
+												disabled={!field.input}
+												onCheckedChange={(checked) => handleMappingChange(field.id, "mandatory", checked === true)}
+											/>
 										</div>
 									</td>
 									<td className={tableCellClassName}>
@@ -638,7 +725,43 @@ export default function ChecksheetMasterPage() {
 								<tr key={row.id} className="odd:bg-slate-50/40 even:bg-white/90">
 									{enabledMappingFields.map((field) => (
 										<td key={`${row.id}-${field.id}`} className={tableCellClassName}>
-											<Input value={typeof row[field.key] === "string" ? String(row[field.key]) : ""} onChange={(e) => handleCheckPointChange(row.id, field.key, e.currentTarget.value)} className={tableInputClassName} style={flatInputStyle} />
+											{field.key === "inspection-items" || field.key === "standard" ? (
+												<AutoGrowTextarea
+													value={typeof row[field.key] === "string" ? String(row[field.key]) : ""}
+													onChange={(value) => handleCheckPointChange(row.id, field.key, value)}
+												/>
+											) : field.key === "responsibility" ? (
+												<Select
+													value={(typeof row[field.key] === "string" ? String(row[field.key]) : "") || "__empty__"}
+													onValueChange={(value) => handleCheckPointChange(row.id, field.key, value === "__empty__" ? "" : value)}
+												>
+													<SelectTrigger className="h-9 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+														<SelectValue placeholder="Select role" />
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="__empty__">Select role</SelectItem>
+														{roles.map((item) => (
+															<SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>
+														))}
+													</SelectContent>
+												</Select>
+											) : field.key === "frequency" ? (
+												<Select
+													value={(typeof row[field.key] === "string" ? String(row[field.key]) : "") || "__empty__"}
+													onValueChange={(value) => handleCheckPointChange(row.id, field.key, value === "__empty__" ? "" : value)}
+												>
+													<SelectTrigger className="h-9 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+														<SelectValue placeholder="Select frequency" />
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="__empty__">Select frequency</SelectItem>
+														<SelectItem value="Daily">Daily</SelectItem>
+														<SelectItem value="Weekly">Weekly</SelectItem>
+													</SelectContent>
+												</Select>
+											) : (
+												<Input value={typeof row[field.key] === "string" ? String(row[field.key]) : ""} onChange={(e) => handleCheckPointChange(row.id, field.key, e.currentTarget.value)} className={tableInputClassName} style={flatInputStyle} />
+											)}
 										</td>
 									))}
 									<td className={tableCellClassName}>
@@ -708,7 +831,16 @@ export default function ChecksheetMasterPage() {
 										</Select>
 									</td>
 									<td className={tableCellClassName}>
-										<Input value={row.frequency} onChange={(e) => handleAuthorizationChange(row.id, "frequency", e.currentTarget.value)} className={tableInputClassName} style={flatInputStyle} />
+										<Select value={row.frequency || "__empty__"} onValueChange={(value) => handleAuthorizationChange(row.id, "frequency", value === "__empty__" ? "" : value)}>
+											<SelectTrigger className="h-9 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+												<SelectValue placeholder="Select frequency" />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="__empty__">Select frequency</SelectItem>
+												<SelectItem value="Daily">Daily</SelectItem>
+												<SelectItem value="Weekly">Weekly</SelectItem>
+											</SelectContent>
+										</Select>
 									</td>
 									<td className={tableCellClassName}>
 										<div className="flex justify-center">
@@ -731,20 +863,36 @@ export default function ChecksheetMasterPage() {
 					</table>
 				</div>
 				<div className="mt-4 flex justify-end">
-					<Button type="button" onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.category.trim() || enabledMappingFields.length === 0} className="rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">
+					<Button type="button" onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form["line-name"].trim() || !form.model.trim() || enabledMappingFields.length === 0} className="rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">
 						{saving ? "Saving..." : editingId ? "Update Checksheet" : "Create Checksheet"}
 					</Button>
 				</div>
 			</div>
+		</div>
+	);
+
+	return (
+		<div className={`${summaryShellClassName} space-y-4 overflow-auto`}>
+			<div className="flex items-center justify-between gap-3">
+				<p className="font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
+					Checksheet Master
+				</p>
+				<Button type="button" onClick={handleOpenCreateModal} className="rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">
+					Create Checksheet
+				</Button>
+			</div>
+
+			{message ? <div className="rounded-xl border border-[rgba(5,150,105,0.2)] bg-[rgba(16,185,129,0.12)] px-4 py-3 text-sm text-[#047857]">{message}</div> : null}
+			{!modalOpen && error ? <div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{error}</div> : null}
 
 			<div className={sectionClassName}>
-				<h2 className="mb-3 text-base font-semibold text-slate-800">Existing Checksheets</h2>
 				<div className="overflow-auto rounded-xl border border-slate-300 bg-white/80">
 					<table className="w-full min-w-[820px] table-auto border-collapse text-sm">
 						<thead>
 							<tr className="bg-slate-100">
 								<th className={tableHeadClassName}>Name</th>
-								<th className={tableHeadClassName}>Category</th>
+								<th className={tableHeadClassName}>Line Name</th>
+								<th className={tableHeadClassName}>Model</th>
 								<th className={tableHeadClassName}>Revision No</th>
 								<th className={tableHeadClassName}>Revision Date</th>
 								<th className={tableHeadClassName}>Status</th>
@@ -755,24 +903,28 @@ export default function ChecksheetMasterPage() {
 						<tbody>
 							{loading ? (
 								<tr>
-									<td colSpan={7} className="px-3 py-6 text-center text-slate-500">Loading checksheets...</td>
+									<td colSpan={8} className="px-3 py-6 text-center text-slate-500">Loading checksheets...</td>
 								</tr>
 							) : items.length === 0 ? (
 								<tr>
-									<td colSpan={7} className="px-3 py-6 text-center text-slate-500">No checksheets available.</td>
+									<td colSpan={8} className="px-3 py-6 text-center text-slate-500">No checksheets available.</td>
 								</tr>
 							) : (
 								items.map((item) => (
-									<tr key={item.id} className="odd:bg-slate-50/40 even:bg-white/90 hover:bg-sky-50/70">
-										<td className={tableCellClassName}>{item.name}</td>
-										<td className={tableCellClassName}>{item.category}</td>
-										<td className={tableCellClassName}>{item["revision-no"]}</td>
-										<td className={tableCellClassName}>{item["revision-date"]}</td>
-										<td className={tableCellClassName}>{item.status}</td>
-										<td className={tableCellClassName}>{item["check-points"]?.length ?? 0}</td>
-										<td className={tableCellClassName}>
+									<tr key={item.id} className="cursor-pointer odd:bg-slate-50/40 even:bg-white/90 hover:bg-sky-50/70" onClick={() => handleEditExisting(item)}>
+										<td className={summaryTableCellClassName}>{item.name}</td>
+										<td className={summaryTableCellClassName}>{item["line-name"]}</td>
+										<td className={summaryTableCellClassName}>{item.model}</td>
+										<td className={summaryTableCellClassName}>{item["revision-no"]}</td>
+										<td className={summaryTableCellClassName}>{formatDisplayDate(item["revision-date"])}</td>
+										<td className={summaryTableCellClassName}>{item.status}</td>
+										<td className={summaryTableCellClassName}>{item["check-points"]?.length ?? 0}</td>
+										<td className={summaryTableCellClassName}>
 											<div className="flex items-center justify-center">
-												<Button type="button" variant="outline" onClick={() => handleEditExisting(item)} className="h-8 rounded-md border-slate-300 bg-white px-2 text-xs text-slate-700" title="Edit checksheet">
+												<Button type="button" variant="outline" onClick={(event) => {
+													event.stopPropagation();
+													handleEditExisting(item);
+												}} className="h-8 rounded-md border-slate-300 bg-white px-2 text-xs text-slate-700" title="Edit checksheet">
 													<Pencil className="h-3.5 w-3.5" />
 												</Button>
 											</div>
@@ -784,6 +936,28 @@ export default function ChecksheetMasterPage() {
 					</table>
 				</div>
 			</div>
+
+			<Dialog
+				open={modalOpen}
+				onOpenChange={(open) => {
+					setModalOpen(open);
+					if (!open) {
+						resetForm();
+						setError(null);
+					}
+				}}
+			>
+				<DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto border-[rgba(30,64,175,0.16)] bg-[linear-gradient(180deg,rgba(252,253,255,0.98),rgba(235,243,251,0.98))] sm:max-w-[min(96vw,90rem)]">
+					<DialogHeader className="border-b border-[rgba(30,64,175,0.1)] bg-[linear-gradient(180deg,rgba(248,250,255,0.96),rgba(226,236,249,0.84))] px-6 py-6">
+						<DialogTitle className="pt-3 text-2xl tracking-[-0.03em] text-[#17181d]">
+							{editingId ? "Edit Checksheet" : "Create Checksheet"}
+						</DialogTitle>
+					</DialogHeader>
+					<div className="px-1 pb-2 pt-4">
+						{renderFormSections()}
+					</div>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }
