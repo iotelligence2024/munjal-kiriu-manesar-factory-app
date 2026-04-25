@@ -2,8 +2,14 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import bcrypt from "bcryptjs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientDistPath = path.join(__dirname, "../dist");
 
 const PORT = Number(process.env.PORT ?? 54321);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? "*";
@@ -17,6 +23,7 @@ app.use(
 	})
 );
 app.use(express.json());
+app.use(express.static(clientDistPath));
 
 const userSchema = new mongoose.Schema(
 	{
@@ -514,17 +521,17 @@ function sanitizeTravelRequisition(document) {
 		},
 		approvalHistory: Array.isArray(document.approvalHistory)
 			? document.approvalHistory.map((entry) => ({
-					cycle: Number(entry?.cycle ?? 1),
-					stage: entry?.stage ?? "",
-					action: entry?.action ?? "",
-					actorUsername: entry?.actorUsername ?? "",
-					actorName: entry?.actorName ?? "",
-					actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
-					remarks: entry?.remarks ?? "",
-					selectedAuthorityUsername: entry?.selectedAuthorityUsername ?? "",
-					selectedAuthorityName: entry?.selectedAuthorityName ?? "",
-					statusAfterAction: entry?.statusAfterAction ?? "",
-				}))
+				cycle: Number(entry?.cycle ?? 1),
+				stage: entry?.stage ?? "",
+				action: entry?.action ?? "",
+				actorUsername: entry?.actorUsername ?? "",
+				actorName: entry?.actorName ?? "",
+				actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
+				remarks: entry?.remarks ?? "",
+				selectedAuthorityUsername: entry?.selectedAuthorityUsername ?? "",
+				selectedAuthorityName: entry?.selectedAuthorityName ?? "",
+				statusAfterAction: entry?.statusAfterAction ?? "",
+			}))
 			: [],
 		itineraryRows: document.itineraryRows ?? [],
 		details: document.details ?? {},
@@ -604,14 +611,14 @@ function sanitizeChecksheetData(document) {
 		approvalFlow,
 		approvalHistory: Array.isArray(document.approvalHistory)
 			? document.approvalHistory.map((entry) => ({
-					stage: entry?.stage ?? "",
-					action: entry?.action ?? "",
-					actorUsername: entry?.actorUsername ?? "",
-					actorName: entry?.actorName ?? "",
-					actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
-					remarks: entry?.remarks ?? "",
-					statusAfterAction: entry?.statusAfterAction ?? "",
-				}))
+				stage: entry?.stage ?? "",
+				action: entry?.action ?? "",
+				actorUsername: entry?.actorUsername ?? "",
+				actorName: entry?.actorName ?? "",
+				actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
+				remarks: entry?.remarks ?? "",
+				statusAfterAction: entry?.statusAfterAction ?? "",
+			}))
 			: [],
 		"check-points-mapping": document["check-points-mapping"] ?? {},
 		"check-points": Array.isArray(document["check-points"]) ? document["check-points"] : [],
@@ -1249,30 +1256,30 @@ app.post("/api/checksheet-data", async (req, res) => {
 
 		const approvalFlow = hadQueryRaised
 			? buildChecksheetApprovalFlow(
-					authorization && typeof authorization === "object" ? authorization : {},
-					{}
-			  )
+				authorization && typeof authorization === "object" ? authorization : {},
+				{}
+			)
 			: buildChecksheetApprovalFlow(
-					authorization && typeof authorization === "object" ? authorization : {},
-					existingItem?.approvalFlow
-			  );
+				authorization && typeof authorization === "object" ? authorization : {},
+				existingItem?.approvalFlow
+			);
 		const approvalHistory = Array.isArray(existingItem?.approvalHistory)
 			? existingItem.approvalHistory
 			: [];
 		const nextApprovalHistory =
 			hadQueryRaised && normalizedStatus === "completed"
 				? [
-						...approvalHistory,
-						{
-							stage: "requestor",
-							action: "resubmitted",
-							actorUsername: "",
-							actorName: String(checksheetName ?? "").trim(),
-							actedAt: new Date(),
-							remarks: "Checksheet resubmitted after query raised.",
-							statusAfterAction: "completed",
-						},
-				  ]
+					...approvalHistory,
+					{
+						stage: "requestor",
+						action: "resubmitted",
+						actorUsername: "",
+						actorName: String(checksheetName ?? "").trim(),
+						actedAt: new Date(),
+						remarks: "Checksheet resubmitted after query raised.",
+						statusAfterAction: "completed",
+					},
+				]
 				: approvalHistory;
 
 		const item = await ChecksheetData.findOneAndUpdate(
@@ -1934,6 +1941,10 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 			message: error instanceof Error ? error.message : "Unable to record approval.",
 		});
 	}
+});
+
+app.use((_req, res) => {
+	res.sendFile(path.join(clientDistPath, "index.html"));
 });
 
 app.listen(PORT, () => {
