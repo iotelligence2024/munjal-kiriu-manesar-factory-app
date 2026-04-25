@@ -4,11 +4,10 @@
 	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
-		"server": "node --env-file=.env server/index.js",
-		"dev:full": "concurrently \"npm:server\" \"npm:dev\"",
-		"start": "vite",
-		"dev": "vite",
+		"server": "node server/index.js",
+		"dev": "concurrently \"npm run server\" \"vite\"",
 		"build": "tsc -b && vite build",
+		"start": "node server/index.js",
 		"preview": "vite preview"
 	},
 	"dependencies": {
