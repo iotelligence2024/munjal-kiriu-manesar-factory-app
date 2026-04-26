@@ -30,7 +30,7 @@ const Footer = () => {
 
 	return (
 		<footer className="footer">
-			<div className="footer-left">
+			<div className="footer-left footer-mobile-copy">
 				<span className="font-semibold text-slate-100">
 					Developed by Iotelligence Private Limited
 				</span>{" "}
@@ -45,7 +45,7 @@ const Footer = () => {
 				| {currentYear}
 			</div>
 
-			<div className="footer-right font-medium text-slate-300 md:ml-auto">
+			<div className="footer-right footer-desktop-time font-medium text-slate-300 md:ml-auto">
 				<div>{date}</div>
 			</div>
 		</footer>

@@ -32,13 +32,6 @@ export function useSidebar() {
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [isOpen, setIsOpen] = React.useState(true);
-	const isMobile = useIsMobile();
-
-	React.useEffect(() => {
-		if (isMobile) {
-			setIsOpen(false);
-		}
-	}, [isMobile]);
 
 	const toggleSidebar = () => {
 		// setIsOpen((prev) => !prev);
