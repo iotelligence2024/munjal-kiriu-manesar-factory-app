@@ -218,6 +218,11 @@ const convertNumberToWords = (value: number): string => {
 };
 
 const parseMoneyValue = (value: string) => Number(String(value ?? "").trim() || 0) || 0;
+const combineDateAndTime = (date: string, time: string) => {
+	if (!date || !time) return null;
+	const combined = new Date(`${date}T${time}`);
+	return Number.isNaN(combined.getTime()) ? null : combined;
+};
 
 const formatMoneyDisplay = (value: number) => {
 	const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -526,6 +531,11 @@ export default function TravelExpenseStatementPage() {
 	}, 0);
 	const expensesPaidByCompanyDisplay = formatMoneyDisplay(expensesPaidByCompanyValue);
 	const payableFromCompanyDisplay = formatMoneyDisplay(payableFromCompanyValue);
+	const hasTravelWindow = Boolean(departureDate && departureTime && arrivalDate && arrivalTime);
+	const isTravelWindowInvalid =
+		hasTravelWindow &&
+		Boolean(combineDateAndTime(departureDate, departureTime) && combineDateAndTime(arrivalDate, arrivalTime)) &&
+		(combineDateAndTime(arrivalDate, arrivalTime)?.getTime() ?? 0) < (combineDateAndTime(departureDate, departureTime)?.getTime() ?? 0);
 
 	useEffect(() => {
 		const computedHeadAmounts = new Map<string, string>([
@@ -560,6 +570,24 @@ export default function TravelExpenseStatementPage() {
 	useEffect(() => {
 		setAmountInWords(convertNumberToWords(Number(totalCostOfTour || 0)));
 	}, [totalCostOfTour]);
+
+	useEffect(() => {
+		const start = combineDateAndTime(departureDate, departureTime);
+		const end = combineDateAndTime(arrivalDate, arrivalTime);
+		if (!start || !end || end.getTime() < start.getTime()) {
+			setDurationDays("");
+			setDurationHours("");
+			return;
+		}
+
+		const diffMs = end.getTime() - start.getTime();
+		const totalHours = Math.floor(diffMs / (1000 * 60 * 60));
+		const days = Math.floor(totalHours / 24);
+		const hours = totalHours % 24;
+
+		setDurationDays(String(days));
+		setDurationHours(String(hours));
+	}, [departureDate, departureTime, arrivalDate, arrivalTime]);
 
 	useEffect(() => {
 		setDailyExpenseRows((previousRows) => {
@@ -879,6 +907,47 @@ export default function TravelExpenseStatementPage() {
 			return;
 		}
 
+		const hasAnyTicketValue = ticketRows.some((row) =>
+			[
+				row.departureDate,
+				row.fromPlace,
+				row.departureTime,
+				row.arrivalDate,
+				row.toPlace,
+				row.arrivalTime,
+				row.mode,
+				row.classTicketNo,
+				row.amount,
+			].some((value) => value.trim())
+		);
+		const hasAnyDailyExpenseValue = dailyExpenseRows.some((row) =>
+			[
+				row.date,
+				row.roomRentLoading,
+				row.roomTaxes,
+				row.privateStayAllowance,
+				row.dailyAllowance,
+				row.incidentalExpenses,
+				row.conveyance,
+				row.privateConveyance,
+				row.telephone,
+				row.postageTelegram,
+				row.miscExpense,
+			].some((value) => value.trim())
+		);
+		const hasAnyConveyanceValue = conveyanceRows.some((row) =>
+			[row.date, row.from, row.to, row.mode, row.amount].some((value) => value.trim())
+		);
+
+		if ((hasAnyTicketValue || hasAnyDailyExpenseValue || hasAnyConveyanceValue) && !hasTravelWindow) {
+			setSubmitError("Fill Departure Date/Time and Arrival Date/Time before entering table details.");
+			return;
+		}
+		if (isTravelWindowInvalid) {
+			setSubmitError("Arrival Date/Time must be after Departure Date/Time.");
+			return;
+		}
+
 		const invalidTicketRowIndex = ticketRows.findIndex((row) =>
 			row.amount.trim() &&
 			[
@@ -905,6 +974,62 @@ export default function TravelExpenseStatementPage() {
 
 		if (invalidConveyanceRowIndex >= 0) {
 			setSubmitError(`Complete all fields in Conveyance row ${invalidConveyanceRowIndex + 1} when an amount is entered.`);
+			return;
+		}
+
+		const invalidDailyExpenseRowIndex = dailyExpenseRows.findIndex((row) =>
+			[
+				row.roomRentLoading,
+				row.roomTaxes,
+				row.privateStayAllowance,
+				row.dailyAllowance,
+				row.incidentalExpenses,
+				row.conveyance,
+				row.privateConveyance,
+				row.telephone,
+				row.postageTelegram,
+				row.miscExpense,
+			].some((value) => value.trim()) && !row.date.trim()
+		);
+
+		if (invalidDailyExpenseRowIndex >= 0) {
+			setSubmitError(`Date is mandatory in Expense Details row ${invalidDailyExpenseRowIndex + 1} when any expense is entered.`);
+			return;
+		}
+
+		const hasDateOutsideTourRange = (dateValue: string) =>
+			Boolean(dateValue && (dateValue < departureDate || dateValue > arrivalDate));
+
+		const ticketRangeErrorIndex = ticketRows.findIndex((row) =>
+			row.amount.trim() && (hasDateOutsideTourRange(row.departureDate) || hasDateOutsideTourRange(row.arrivalDate))
+		);
+		if (ticketRangeErrorIndex >= 0) {
+			setSubmitError(`Cost Of Tickets row ${ticketRangeErrorIndex + 1} dates must be between Departure and Arrival dates.`);
+			return;
+		}
+
+		const dailyRangeErrorIndex = dailyExpenseRows.findIndex((row) =>
+			row.date.trim() && hasDateOutsideTourRange(row.date)
+		);
+		if (dailyRangeErrorIndex >= 0) {
+			setSubmitError(`Expense Details row ${dailyRangeErrorIndex + 1} date must be between Departure and Arrival dates.`);
+			return;
+		}
+
+		const conveyanceRangeErrorIndex = conveyanceRows.findIndex((row) =>
+			row.date.trim() && hasDateOutsideTourRange(row.date)
+		);
+		if (conveyanceRangeErrorIndex >= 0) {
+			setSubmitError(`Conveyance row ${conveyanceRangeErrorIndex + 1} date must be between Departure and Arrival dates.`);
+			return;
+		}
+
+		const invalidHeadExpenseRowIndex = headExpenseRows.findIndex((row) =>
+			parseMoneyValue(row.amount) > 0 && !row.paidBy.trim()
+		);
+
+		if (invalidHeadExpenseRowIndex >= 0) {
+			setSubmitError(`Paid by Co/Self is mandatory in Particulars row ${invalidHeadExpenseRowIndex + 1} when amount is greater than zero.`);
 			return;
 		}
 
@@ -1009,25 +1134,25 @@ export default function TravelExpenseStatementPage() {
 									<p className={sectionTitleClass}>Travel Expense Statement</p>
 									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
 										<Field label="Name">
-											<Input value={employeeName} onInput={(e) => setEmployeeName(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={employeeName} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Grade">
 											<Input value={grade} onInput={(e) => setGrade(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Deptt/Branch">
-											<Input value={departmentBranch} onInput={(e) => setDepartmentBranch(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={departmentBranch} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Emp. Code">
-											<Input value={employeeCode} onInput={(e) => setEmployeeCode(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={employeeCode} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Designation">
-											<Input value={designation} onInput={(e) => setDesignation(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={designation} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Date">
-											<Input type="date" value={expenseDate} onInput={(e) => setExpenseDate(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input type="date" value={expenseDate} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Voucher No.">
-											<Input value={voucherNo} onInput={(e) => setVoucherNo(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={voucherNo} placeholder="Auto-generated on first save" className={fieldSurfaceClass} disabled />
 										</Field>
 									</div>
 								</div>
@@ -1048,10 +1173,10 @@ export default function TravelExpenseStatementPage() {
 											<Input type="time" value={arrivalTime} onInput={(e) => setArrivalTime(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Duration Days">
-											<Input value={durationDays} onInput={(e) => setDurationDays(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={durationDays} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Duration Hrs">
-											<Input value={durationHours} onInput={(e) => setDurationHours(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input value={durationHours} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Product/Deptt. Code">
 											<Input value={productDeptCode} onInput={(e) => setProductDeptCode(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
@@ -1078,6 +1203,7 @@ export default function TravelExpenseStatementPage() {
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Cost Of Tickets</p>
+									{!hasTravelWindow ? <p className="mb-2 text-xs font-medium text-amber-700">Fill Departure Date/Time and Arrival Date/Time to enable this table.</p> : null}
 									<div className="overflow-auto rounded-xl border border-slate-300 bg-white">
 										<table className="w-full min-w-[1200px] border-collapse text-sm">
 											<thead>
@@ -1092,22 +1218,37 @@ export default function TravelExpenseStatementPage() {
 													const isRowRequired = Boolean(row.amount.trim());
 													return (
 													<tr key={`ticket-${index}`}>
-														<td className="border border-slate-300 px-2 py-1"><Input type="date" required={isRowRequired} value={row.departureDate} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "departureDate", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input type="date" min={departureDate || undefined} max={arrivalDate || undefined} required={isRowRequired} value={row.departureDate} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "departureDate", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
 														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.fromPlace} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "fromPlace", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input type="time" required={isRowRequired} value={row.departureTime} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "departureTime", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input type="date" required={isRowRequired} value={row.arrivalDate} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "arrivalDate", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.toPlace} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "toPlace", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input type="time" required={isRowRequired} value={row.arrivalTime} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "arrivalTime", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.mode} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "mode", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.classTicketNo} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "classTicketNo", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "amount", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input type="time" required={isRowRequired} value={row.departureTime} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "departureTime", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input type="date" min={departureDate || undefined} max={arrivalDate || undefined} required={isRowRequired} value={row.arrivalDate} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "arrivalDate", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.toPlace} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "toPlace", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input type="time" required={isRowRequired} value={row.arrivalTime} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "arrivalTime", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1">
+															<Select
+																value={row.mode}
+																onValueChange={(value) => updateRow(setTicketRows, ticketRows, index, "mode", value)}
+																disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
+															>
+																<SelectTrigger className={`${fieldSurfaceClass} h-10 w-full border-0 bg-transparent px-0`}>
+																	<SelectValue placeholder="Select mode" />
+																</SelectTrigger>
+																<SelectContent>
+																	<SelectItem value="Air">Air</SelectItem>
+																	<SelectItem value="Rail">Rail</SelectItem>
+																	<SelectItem value="Bus">Bus</SelectItem>
+																</SelectContent>
+															</Select>
+														</td>
+														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.classTicketNo} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "classTicketNo", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} onInput={(e) => updateRow(setTicketRows, ticketRows, index, "amount", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
 														<td className="border border-slate-300 p-1.5">
 															<div className="flex items-center justify-center gap-1.5">
-																<Button type="button" variant="outline" size="icon" onClick={() => handleAddTicketRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
+																<Button type="button" variant="outline" size="icon" onClick={() => handleAddTicketRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
 																	<Plus className="h-4 w-4 text-slate-700" />
 																</Button>
 																{ticketRows.length > MIN_TICKET_ROWS ? (
-																	<Button type="button" variant="outline" size="icon" onClick={() => handleDeleteTicketRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
+																	<Button type="button" variant="outline" size="icon" onClick={() => handleDeleteTicketRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
 																		<Trash2 className="h-4 w-4 text-rose-600" />
 																	</Button>
 																) : null}
@@ -1122,6 +1263,7 @@ export default function TravelExpenseStatementPage() {
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Expense Details (In Rupees)</p>
+									{!hasTravelWindow ? <p className="mb-2 text-xs font-medium text-amber-700">Fill Departure Date/Time and Arrival Date/Time to enable this table.</p> : null}
 									<div className="overflow-auto rounded-xl border border-slate-300 bg-white">
 										<table className="w-full min-w-[1500px] border-collapse text-sm">
 											<thead>
@@ -1132,21 +1274,37 @@ export default function TravelExpenseStatementPage() {
 												</tr>
 											</thead>
 											<tbody>
-												{dailyExpenseRows.map((row, index) => (
+												{dailyExpenseRows.map((row, index) => {
+													const isDateRequired = Boolean(
+														row.roomRentLoading.trim() ||
+														row.roomTaxes.trim() ||
+														row.privateStayAllowance.trim() ||
+														row.dailyAllowance.trim() ||
+														row.incidentalExpenses.trim() ||
+														row.conveyance.trim() ||
+														row.privateConveyance.trim() ||
+														row.telephone.trim() ||
+														row.postageTelegram.trim() ||
+														row.miscExpense.trim()
+													);
+													return (
 													<tr key={`daily-${index}`}>
 														{(Object.keys(row) as Array<keyof DailyExpenseRow>).map((key) => (
 															<td key={key} className="border border-slate-300 px-2 py-1">
 																<Input
 																	type={key === "date" ? "date" : "text"}
+																	min={key === "date" ? (departureDate || undefined) : undefined}
+																	max={key === "date" ? (arrivalDate || undefined) : undefined}
+																	required={key === "date" ? isDateRequired : false}
 																	value={row[key]}
 																	onInput={(e) => updateRow(setDailyExpenseRows, dailyExpenseRows, index, key, e.currentTarget.value)}
 																	className={fieldSurfaceClass}
-																	disabled={key === "total" || (selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval)}
+																	disabled={key === "total" || !hasTravelWindow || (selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval)}
 																/>
 															</td>
 														))}
 													</tr>
-												))}
+												)})}
 											</tbody>
 										</table>
 									</div>
@@ -1154,6 +1312,7 @@ export default function TravelExpenseStatementPage() {
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Conveyance</p>
+									{!hasTravelWindow ? <p className="mb-2 text-xs font-medium text-amber-700">Fill Departure Date/Time and Arrival Date/Time to enable this table.</p> : null}
 									<div className="overflow-auto rounded-xl border border-slate-300 bg-white">
 										<table className="w-full min-w-[900px] border-collapse text-sm">
 											<thead>
@@ -1168,18 +1327,18 @@ export default function TravelExpenseStatementPage() {
 													const isRowRequired = Boolean(row.amount.trim());
 													return (
 													<tr key={`conveyance-${index}`}>
-														<td className="border border-slate-300 px-2 py-1"><Input type="date" required={isRowRequired} value={row.date} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "date", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.from} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "from", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.to} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "to", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.mode} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "mode", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "amount", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input type="date" min={departureDate || undefined} max={arrivalDate || undefined} required={isRowRequired} value={row.date} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "date", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.from} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "from", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.to} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "to", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input required={isRowRequired} value={row.mode} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "mode", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
+														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} onInput={(e) => updateRow(setConveyanceRows, conveyanceRows, index, "amount", e.currentTarget.value)} className={fieldSurfaceClass} disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
 														<td className="border border-slate-300 p-1.5">
 															<div className="flex items-center justify-center gap-1.5">
-																<Button type="button" variant="outline" size="icon" onClick={() => handleAddConveyanceRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
+																<Button type="button" variant="outline" size="icon" onClick={() => handleAddConveyanceRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
 																	<Plus className="h-4 w-4 text-slate-700" />
 																</Button>
 																{conveyanceRows.length > MIN_CONVEYANCE_ROWS ? (
-																	<Button type="button" variant="outline" size="icon" onClick={() => handleDeleteConveyanceRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
+																	<Button type="button" variant="outline" size="icon" onClick={() => handleDeleteConveyanceRow(index)} className="h-8 w-8 border-slate-300 bg-white" disabled={!hasTravelWindow || selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
 																		<Trash2 className="h-4 w-4 text-rose-600" />
 																	</Button>
 																) : null}
@@ -1206,7 +1365,9 @@ export default function TravelExpenseStatementPage() {
 												</tr>
 											</thead>
 											<tbody>
-												{headExpenseRows.map((row, index) => (
+												{headExpenseRows.map((row, index) => {
+													const isPaidByRequired = parseMoneyValue(row.amount) > 0;
+													return (
 													<tr key={row.head}>
 														<td className="border border-slate-300 px-3 py-2 font-medium text-slate-700">{row.head}</td>
 														<td className="border border-slate-300 px-2 py-1">
@@ -1215,7 +1376,7 @@ export default function TravelExpenseStatementPage() {
 																onValueChange={(value) => updateRow(setHeadExpenseRows, headExpenseRows, index, "paidBy", value)}
 																disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
 															>
-																<SelectTrigger className={`${fieldSurfaceClass} h-10 w-full border-0 bg-transparent px-0`}>
+																<SelectTrigger className={`${fieldSurfaceClass} h-10 w-full border-0 bg-transparent px-0 ${isPaidByRequired && !row.paidBy.trim() ? "text-rose-600" : ""}`}>
 																	<SelectValue placeholder="Select" />
 																</SelectTrigger>
 																<SelectContent>
@@ -1228,7 +1389,7 @@ export default function TravelExpenseStatementPage() {
 														<td className="border border-slate-300 px-2 py-1"><Input value={row.code} onInput={(e) => updateRow(setHeadExpenseRows, headExpenseRows, index, "code", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
 														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} className={fieldSurfaceClass} disabled /></td>
 													</tr>
-												))}
+												)})}
 											</tbody>
 										</table>
 									</div>

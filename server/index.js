@@ -721,6 +721,36 @@ function sanitizeTravelExpenseStatement(document) {
 	};
 }
 
+const getIsoDateString = (value = new Date()) => {
+	const date = value instanceof Date && !Number.isNaN(value.getTime()) ? value : new Date();
+	return date.toISOString().slice(0, 10);
+};
+
+const getDateToken = (isoDate) => String(isoDate ?? "").replaceAll("-", "");
+
+async function generateTravelExpenseVoucherNo(expenseDate) {
+	const safeExpenseDate = getIsoDateString(new Date(String(expenseDate ?? "")));
+	const token = getDateToken(safeExpenseDate);
+	const prefix = `TES-${token}-`;
+	const existingDocuments = await TravelExpenseStatement.find({
+		voucherNo: { $regex: `^${prefix}` },
+	})
+		.select({ voucherNo: 1 })
+		.lean();
+
+	let maxSequence = 0;
+	for (const item of existingDocuments) {
+		const voucher = String(item?.voucherNo ?? "");
+		const sequenceText = voucher.slice(prefix.length);
+		const sequence = Number(sequenceText);
+		if (Number.isFinite(sequence) && sequence > maxSequence) {
+			maxSequence = sequence;
+		}
+	}
+
+	return `${prefix}${String(maxSequence + 1).padStart(3, "0")}`;
+}
+
 function sanitizeDepartment(document) {
 	return {
 		id: document._id.toString(),
@@ -1042,8 +1072,6 @@ app.post("/api/travel-expense-statements", async (req, res) => {
 			grade,
 			departmentBranch,
 			designation,
-			expenseDate,
-			voucherNo,
 			totalCostOfTour,
 			advanceTakenFromCompany,
 			expensesPaidByCompany,
@@ -1060,14 +1088,17 @@ app.post("/api/travel-expense-statements", async (req, res) => {
 
 		await connectToDatabase();
 
+		const generatedExpenseDate = getIsoDateString(new Date());
+		const generatedVoucherNo = await generateTravelExpenseVoucherNo(generatedExpenseDate);
+
 		const createdDocument = await TravelExpenseStatement.create({
 			employeeName: String(employeeName).trim(),
 			employeeCode: String(employeeCode).trim().toUpperCase(),
 			grade: String(grade ?? "").trim(),
 			departmentBranch: String(departmentBranch ?? "").trim(),
 			designation: String(designation ?? "").trim(),
-			expenseDate: String(expenseDate ?? "").trim(),
-			voucherNo: String(voucherNo ?? "").trim(),
+			expenseDate: generatedExpenseDate,
+			voucherNo: generatedVoucherNo,
 			totalCostOfTour: String(totalCostOfTour ?? "").trim(),
 			advanceTakenFromCompany: String(advanceTakenFromCompany ?? "").trim(),
 			expensesPaidByCompany: String(expensesPaidByCompany ?? "").trim(),
@@ -2217,8 +2248,6 @@ app.put("/api/travel-expense-statements/:id", async (req, res) => {
 			grade,
 			departmentBranch,
 			designation,
-			expenseDate,
-			voucherNo,
 			totalCostOfTour,
 			advanceTakenFromCompany,
 			expensesPaidByCompany,
@@ -2250,13 +2279,18 @@ app.put("/api/travel-expense-statements/:id", async (req, res) => {
 		document.grade = String(grade ?? "").trim();
 		document.departmentBranch = String(departmentBranch ?? "").trim();
 		document.designation = String(designation ?? "").trim();
-		document.expenseDate = String(expenseDate ?? "").trim();
-		document.voucherNo = String(voucherNo ?? "").trim();
 		document.totalCostOfTour = String(totalCostOfTour ?? "").trim();
 		document.advanceTakenFromCompany = String(advanceTakenFromCompany ?? "").trim();
 		document.expensesPaidByCompany = String(expensesPaidByCompany ?? "").trim();
 		document.payableToFromCompany = String(payableToFromCompany ?? "").trim();
 		document.details = details && typeof details === "object" ? details : {};
+
+		if (!String(document.expenseDate ?? "").trim()) {
+			document.expenseDate = getIsoDateString(document.createdAt instanceof Date ? document.createdAt : new Date());
+		}
+		if (!String(document.voucherNo ?? "").trim()) {
+			document.voucherNo = await generateTravelExpenseVoucherNo(document.expenseDate);
+		}
 
 		const normalizedStatus = String(status ?? document.status ?? "SUBMITTED").trim().toUpperCase() || "SUBMITTED";
 		document.status = normalizedStatus;
