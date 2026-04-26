@@ -437,6 +437,111 @@ const TravelRequisition =
 	mongoose.models.TravelRequisition ||
 	mongoose.model("TravelRequisition", travelRequisitionSchema);
 
+const travelExpenseStatementSchema = new mongoose.Schema(
+	{
+		employeeName: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		employeeCode: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		grade: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		departmentBranch: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		designation: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		expenseDate: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		voucherNo: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		totalCostOfTour: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		advanceTakenFromCompany: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		expensesPaidByCompany: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		payableToFromCompany: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		status: {
+			type: String,
+			trim: true,
+			default: "SUBMITTED",
+		},
+		approvalCycle: {
+			type: Number,
+			default: 1,
+		},
+		approvalFlow: {
+			hrHod: approvalStageSchema,
+			financeHod: {
+				...approvalStageSchema,
+				selectedAuthorityUsername: { type: String, trim: true, default: "" },
+				selectedAuthorityName: { type: String, trim: true, default: "" },
+			},
+			approvingAuthority: approvalStageSchema,
+		},
+		approvalHistory: [
+			{
+				cycle: { type: Number, default: 1 },
+				stage: { type: String, trim: true, default: "" },
+				action: { type: String, trim: true, default: "" },
+				actorUsername: { type: String, trim: true, default: "" },
+				actorName: { type: String, trim: true, default: "" },
+				actedAt: { type: Date, default: null },
+				remarks: { type: String, trim: true, default: "" },
+				selectedAuthorityUsername: { type: String, trim: true, default: "" },
+				selectedAuthorityName: { type: String, trim: true, default: "" },
+				statusAfterAction: { type: String, trim: true, default: "" },
+			},
+		],
+		details: {
+			type: mongoose.Schema.Types.Mixed,
+			default: {},
+		},
+	},
+	{
+		collection: "travel-expense-statements",
+		timestamps: true,
+		versionKey: false,
+	}
+);
+
+const TravelExpenseStatement =
+	mongoose.models.TravelExpenseStatement ||
+	mongoose.model("TravelExpenseStatement", travelExpenseStatementSchema);
+
 async function connectToDatabase() {
 	if (mongoose.connection.readyState === 1) {
 		return mongoose.connection;
@@ -535,6 +640,84 @@ function sanitizeTravelRequisition(document) {
 			: [],
 		itineraryRows: document.itineraryRows ?? [],
 		details: document.details ?? {},
+	};
+}
+
+function sanitizeTravelExpenseStatement(document) {
+	return {
+		id: document._id.toString(),
+		date: document.expenseDate || "-",
+		voucherNo: document.voucherNo || "-",
+		employeeName: document.employeeName || "-",
+		employeeCode: document.employeeCode || "-",
+		grade: document.grade || "-",
+		departmentBranch: document.departmentBranch || "-",
+		designation: document.designation || "-",
+		totalCostOfTour: document.totalCostOfTour || "-",
+		advanceTakenFromCompany: document.advanceTakenFromCompany || "-",
+		expensesPaidByCompany: document.expensesPaidByCompany || "-",
+		payableToFromCompany: document.payableToFromCompany || "-",
+		status: document.status || "SUBMITTED",
+		approvalCycle: Number(document.approvalCycle ?? 1),
+		createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
+		approvalFlow: {
+			hrHod: {
+				approved: Boolean(document.approvalFlow?.hrHod?.approved),
+				queried: Boolean(document.approvalFlow?.hrHod?.queried),
+				action: document.approvalFlow?.hrHod?.action ?? "",
+				approvedByUsername: document.approvalFlow?.hrHod?.approvedByUsername ?? "",
+				approvedByName: document.approvalFlow?.hrHod?.approvedByName ?? "",
+				approvedAt:
+					document.approvalFlow?.hrHod?.approvedAt instanceof Date
+						? document.approvalFlow.hrHod.approvedAt.toISOString()
+						: "",
+				remarks: document.approvalFlow?.hrHod?.remarks ?? "",
+			},
+			financeHod: {
+				approved: Boolean(document.approvalFlow?.financeHod?.approved),
+				queried: Boolean(document.approvalFlow?.financeHod?.queried),
+				action: document.approvalFlow?.financeHod?.action ?? "",
+				approvedByUsername: document.approvalFlow?.financeHod?.approvedByUsername ?? "",
+				approvedByName: document.approvalFlow?.financeHod?.approvedByName ?? "",
+				approvedAt:
+					document.approvalFlow?.financeHod?.approvedAt instanceof Date
+						? document.approvalFlow.financeHod.approvedAt.toISOString()
+						: "",
+				selectedAuthorityUsername:
+					document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
+				selectedAuthorityName:
+					document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				remarks: document.approvalFlow?.financeHod?.remarks ?? "",
+			},
+			approvingAuthority: {
+				approved: Boolean(document.approvalFlow?.approvingAuthority?.approved),
+				queried: Boolean(document.approvalFlow?.approvingAuthority?.queried),
+				action: document.approvalFlow?.approvingAuthority?.action ?? "",
+				approvedByUsername:
+					document.approvalFlow?.approvingAuthority?.approvedByUsername ?? "",
+				approvedByName: document.approvalFlow?.approvingAuthority?.approvedByName ?? "",
+				approvedAt:
+					document.approvalFlow?.approvingAuthority?.approvedAt instanceof Date
+						? document.approvalFlow.approvingAuthority.approvedAt.toISOString()
+						: "",
+				remarks: document.approvalFlow?.approvingAuthority?.remarks ?? "",
+			},
+		},
+		approvalHistory: Array.isArray(document.approvalHistory)
+			? document.approvalHistory.map((entry) => ({
+					cycle: Number(entry.cycle ?? 1),
+					stage: entry.stage ?? "",
+					action: entry.action ?? "",
+					actorUsername: entry.actorUsername ?? "",
+					actorName: entry.actorName ?? "",
+					actedAt: entry.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
+					remarks: entry.remarks ?? "",
+					selectedAuthorityUsername: entry.selectedAuthorityUsername ?? "",
+					selectedAuthorityName: entry.selectedAuthorityName ?? "",
+					statusAfterAction: entry.statusAfterAction ?? "",
+				}))
+			: [],
+		details: document.details && typeof document.details === "object" ? document.details : {},
 	};
 }
 
@@ -827,6 +1010,88 @@ app.post("/api/travel-requisitions", async (req, res) => {
 		return res.status(500).json({
 			ok: false,
 			message: error instanceof Error ? error.message : "Unable to save travel requisition.",
+		});
+	}
+});
+
+app.get("/api/travel-expense-statements", async (_req, res) => {
+	try {
+		await connectToDatabase();
+
+		const documents = await TravelExpenseStatement.find()
+			.sort({ createdAt: -1 })
+			.lean();
+
+		return res.status(200).json({
+			ok: true,
+			items: documents.map(sanitizeTravelExpenseStatement),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to load travel expense statements.",
+		});
+	}
+});
+
+app.post("/api/travel-expense-statements", async (req, res) => {
+	try {
+		const {
+			employeeName,
+			employeeCode,
+			grade,
+			departmentBranch,
+			designation,
+			expenseDate,
+			voucherNo,
+			totalCostOfTour,
+			advanceTakenFromCompany,
+			expensesPaidByCompany,
+			payableToFromCompany,
+			details,
+		} = req.body ?? {};
+
+		if (!employeeName || !employeeCode) {
+			return res.status(400).json({
+				ok: false,
+				message: "Employee name and employee code are required.",
+			});
+		}
+
+		await connectToDatabase();
+
+		const createdDocument = await TravelExpenseStatement.create({
+			employeeName: String(employeeName).trim(),
+			employeeCode: String(employeeCode).trim().toUpperCase(),
+			grade: String(grade ?? "").trim(),
+			departmentBranch: String(departmentBranch ?? "").trim(),
+			designation: String(designation ?? "").trim(),
+			expenseDate: String(expenseDate ?? "").trim(),
+			voucherNo: String(voucherNo ?? "").trim(),
+			totalCostOfTour: String(totalCostOfTour ?? "").trim(),
+			advanceTakenFromCompany: String(advanceTakenFromCompany ?? "").trim(),
+			expensesPaidByCompany: String(expensesPaidByCompany ?? "").trim(),
+			payableToFromCompany: String(payableToFromCompany ?? "").trim(),
+			status: "SUBMITTED",
+			approvalCycle: 1,
+			approvalFlow: {
+				hrHod: {},
+				financeHod: {},
+				approvingAuthority: {},
+			},
+			approvalHistory: [],
+			details: details && typeof details === "object" ? details : {},
+		});
+
+		return res.status(201).json({
+			ok: true,
+			message: "Travel expense statement submitted successfully.",
+			item: sanitizeTravelExpenseStatement(createdDocument),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to save travel expense statement.",
 		});
 	}
 });
@@ -1934,6 +2199,281 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 			ok: true,
 			message: "Approval recorded successfully.",
 			item: sanitizeTravelRequisition(document),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to record approval.",
+		});
+	}
+});
+
+app.put("/api/travel-expense-statements/:id", async (req, res) => {
+	try {
+		const { id } = req.params;
+		const {
+			employeeName,
+			employeeCode,
+			grade,
+			departmentBranch,
+			designation,
+			expenseDate,
+			voucherNo,
+			totalCostOfTour,
+			advanceTakenFromCompany,
+			expensesPaidByCompany,
+			payableToFromCompany,
+			details,
+			status,
+		} = req.body ?? {};
+
+		if (!employeeName || !employeeCode) {
+			return res.status(400).json({
+				ok: false,
+				message: "Employee name and employee code are required.",
+			});
+		}
+
+		await connectToDatabase();
+
+		const document = await TravelExpenseStatement.findById(id);
+
+		if (!document) {
+			return res.status(404).json({
+				ok: false,
+				message: "Travel expense statement not found.",
+			});
+		}
+
+		document.employeeName = String(employeeName).trim();
+		document.employeeCode = String(employeeCode).trim().toUpperCase();
+		document.grade = String(grade ?? "").trim();
+		document.departmentBranch = String(departmentBranch ?? "").trim();
+		document.designation = String(designation ?? "").trim();
+		document.expenseDate = String(expenseDate ?? "").trim();
+		document.voucherNo = String(voucherNo ?? "").trim();
+		document.totalCostOfTour = String(totalCostOfTour ?? "").trim();
+		document.advanceTakenFromCompany = String(advanceTakenFromCompany ?? "").trim();
+		document.expensesPaidByCompany = String(expensesPaidByCompany ?? "").trim();
+		document.payableToFromCompany = String(payableToFromCompany ?? "").trim();
+		document.details = details && typeof details === "object" ? details : {};
+
+		const normalizedStatus = String(status ?? document.status ?? "SUBMITTED").trim().toUpperCase() || "SUBMITTED";
+		document.status = normalizedStatus;
+
+		if (normalizedStatus === "SUBMITTED") {
+			document.approvalHistory = [
+				...(Array.isArray(document.approvalHistory) ? document.approvalHistory : []),
+				{
+					cycle: Number(document.approvalCycle ?? 1),
+					stage: "requestor",
+					action: "resubmitted",
+					actorUsername: "",
+					actorName: "",
+					actedAt: new Date(),
+					remarks: "",
+					selectedAuthorityUsername: "",
+					selectedAuthorityName: "",
+					statusAfterAction: "SUBMITTED",
+				},
+			];
+			document.approvalCycle = Number(document.approvalCycle ?? 1) + 1;
+			document.approvalFlow = {
+				hrHod: {},
+				financeHod: {},
+				approvingAuthority: {},
+			};
+		}
+
+		const updatedDocument = await document.save();
+
+		return res.status(200).json({
+			ok: true,
+			message: "Travel expense statement updated successfully.",
+			item: sanitizeTravelExpenseStatement(updatedDocument),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to update travel expense statement.",
+		});
+	}
+});
+
+app.delete("/api/travel-expense-statements/:id", async (req, res) => {
+	try {
+		const { id } = req.params;
+		await connectToDatabase();
+
+		const deletedDocument = await TravelExpenseStatement.findByIdAndDelete(id).lean();
+
+		if (!deletedDocument) {
+			return res.status(404).json({
+				ok: false,
+				message: "Travel expense statement not found.",
+			});
+		}
+
+		return res.status(200).json({
+			ok: true,
+			message: "Travel expense statement deleted successfully.",
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to delete travel expense statement.",
+		});
+	}
+});
+
+app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
+	try {
+		const { id } = req.params;
+		const {
+			stage,
+			action,
+			actorUsername,
+			actorName,
+			selectedAuthorityUsername,
+			selectedAuthorityName,
+			remarks,
+		} = req.body ?? {};
+
+		if (!stage || !actorUsername || !action) {
+			return res.status(400).json({
+				ok: false,
+				message: "Approval stage, action and actor username are required.",
+			});
+		}
+
+		await connectToDatabase();
+		const document = await TravelExpenseStatement.findById(id);
+
+		if (!document) {
+			return res.status(404).json({
+				ok: false,
+				message: "Travel expense statement not found.",
+			});
+		}
+
+		const currentStage = String(stage).trim();
+		const currentAction = String(action).trim().toLowerCase();
+		const username = String(actorUsername).trim().toLowerCase();
+		const name = String(actorName ?? "").trim();
+		const remarksValue = String(remarks ?? "").trim();
+		const approvedAt = new Date();
+
+		if (!["hrHod", "financeHod", "approvingAuthority"].includes(currentStage)) {
+			return res.status(400).json({
+				ok: false,
+				message: "Unsupported approval stage.",
+			});
+		}
+
+		if (!["approve", "query"].includes(currentAction)) {
+			return res.status(400).json({
+				ok: false,
+				message: "Unsupported approval action.",
+			});
+		}
+
+		if (!remarksValue) {
+			return res.status(400).json({
+				ok: false,
+				message: "Remarks are required for approval and query actions.",
+			});
+		}
+
+		if (currentStage === "hrHod") {
+			if (document.approvalFlow?.hrHod?.approved && currentAction === "approve") {
+				return res.status(409).json({ ok: false, message: "HR HOD / Admin HOD already approved this statement." });
+			}
+
+			document.approvalFlow.hrHod = {
+				approved: currentAction === "approve",
+				queried: currentAction === "query",
+				action: currentAction,
+				approvedByUsername: username,
+				approvedByName: name,
+				approvedAt,
+				remarks: remarksValue,
+			};
+			document.status = currentAction === "approve" ? "HR_HOD_APPROVED" : "HR_HOD_QUERY";
+		} else if (currentStage === "financeHod") {
+			if (!document.approvalFlow?.hrHod?.approved) {
+				return res.status(409).json({ ok: false, message: "HR HOD / Admin HOD approval is required first." });
+			}
+
+			document.approvalFlow.financeHod = {
+				approved: currentAction === "approve",
+				queried: currentAction === "query",
+				action: currentAction,
+				approvedByUsername: username,
+				approvedByName: name,
+				approvedAt,
+				selectedAuthorityUsername:
+					currentAction === "approve"
+						? String(selectedAuthorityUsername ?? "").trim().toLowerCase()
+						: document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
+				selectedAuthorityName:
+					currentAction === "approve"
+						? String(selectedAuthorityName ?? "").trim()
+						: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				remarks: remarksValue,
+			};
+			document.status = currentAction === "approve" ? "FINANCE_HOD_APPROVED" : "FINANCE_HOD_QUERY";
+		} else if (currentStage === "approvingAuthority") {
+			const assignedAuthority =
+				document.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() ?? "";
+
+			if (!document.approvalFlow?.financeHod?.approved) {
+				return res.status(409).json({ ok: false, message: "Finance HOD approval is required first." });
+			}
+
+			if (assignedAuthority && assignedAuthority !== username) {
+				return res.status(403).json({ ok: false, message: "Only the assigned approving authority can act on this statement." });
+			}
+
+			document.approvalFlow.approvingAuthority = {
+				approved: currentAction === "approve",
+				queried: currentAction === "query",
+				action: currentAction,
+				approvedByUsername: username,
+				approvedByName: name,
+				approvedAt,
+				remarks: remarksValue,
+			};
+			document.status = currentAction === "approve" ? "APPROVED" : "APPROVING_AUTHORITY_QUERY";
+		}
+
+		document.approvalHistory = [
+			...(Array.isArray(document.approvalHistory) ? document.approvalHistory : []),
+			{
+				cycle: Number(document.approvalCycle ?? 1),
+				stage: currentStage,
+				action: currentAction,
+				actorUsername: username,
+				actorName: name,
+				actedAt: approvedAt,
+				remarks: remarksValue,
+				selectedAuthorityUsername:
+					currentStage === "financeHod" && currentAction === "approve"
+						? String(selectedAuthorityUsername ?? "").trim().toLowerCase()
+						: document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
+				selectedAuthorityName:
+					currentStage === "financeHod" && currentAction === "approve"
+						? String(selectedAuthorityName ?? "").trim()
+						: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				statusAfterAction: document.status,
+			},
+		];
+
+		await document.save();
+
+		return res.status(200).json({
+			ok: true,
+			message: "Approval recorded successfully.",
+			item: sanitizeTravelExpenseStatement(document),
 		});
 	} catch (error) {
 		return res.status(500).json({
