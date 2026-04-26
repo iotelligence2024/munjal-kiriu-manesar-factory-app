@@ -86,7 +86,7 @@ const detailInputClassName =
 const detailTextareaClassName =
 	"min-h-[2.25rem] resize-none overflow-hidden !border-0 !bg-transparent px-0 py-2 text-sm !shadow-none outline-none !ring-0 focus:!border-0 focus:outline-none focus:!ring-0";
 const approvalTextareaClassName =
-	"min-h-[7rem] resize-none overflow-hidden rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.9))] px-4 py-3 text-sm text-[#17181d] placeholder:text-[#8c98a8] shadow-none outline-none ring-0 focus:border-[rgba(59,130,246,0.22)] focus:outline-none focus:ring-0";
+	"min-h-[7rem] resize-none overflow-hidden rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-white px-4 py-3 text-sm text-[#17181d] placeholder:text-[#8c98a8] shadow-none outline-none ring-0 focus:border-[rgba(59,130,246,0.22)] focus:outline-none focus:ring-0";
 
 const badgeClassName = (tone: "pending" | "neutral" | "completed" | "approval") =>
 	[
@@ -228,6 +228,20 @@ const isApprovalStageApproved = (
 	return Boolean(stage?.approved);
 };
 
+const normalizeRoleText = (value: unknown) =>
+	String(value ?? "")
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+
+const splitResponsibilities = (value: unknown) =>
+	String(value ?? "")
+		.split(/[\/,|]/)
+		.map((item) => normalizeRoleText(item))
+		.filter(Boolean);
+
 export default function DigitalChecksheetListPage() {
 	const { session } = useSession();
 	const [searchParams] = useSearchParams();
@@ -324,6 +338,7 @@ export default function DigitalChecksheetListPage() {
 		[selectedChecksheet, currentDateDataByChecksheetId]
 	);
 	const selectedResolvedDataItem = selectedDataItem;
+	const normalizedSessionRole = normalizeRoleText(session?.role ?? "");
 	const isQueryRaised = useMemo(() => {
 		if (!selectedResolvedDataItem) return false;
 
@@ -459,6 +474,16 @@ export default function DigitalChecksheetListPage() {
 
 	const handleDetailCellChange = (rowIndex: number, key: string, value: string) => {
 		if (isReadOnlyChecksheet) return;
+		const rowResponsibility =
+			selectedRows[rowIndex]?.responsibility ??
+			selectedChecksheet?.["check-points"]?.[rowIndex]?.responsibility ??
+			"";
+		const acceptedResponsibilities = splitResponsibilities(rowResponsibility);
+		const canEditRow =
+			acceptedResponsibilities.length === 0 ||
+			acceptedResponsibilities.includes(normalizedSessionRole);
+		if (!canEditRow) return;
+
 		setSelectedRows((current) =>
 			current.map((row, index) =>
 				index === rowIndex
@@ -470,6 +495,27 @@ export default function DigitalChecksheetListPage() {
 			)
 		);
 	};
+
+	const rowEditPermissions = useMemo(
+		() =>
+			selectedRows.map((row, index) => {
+				const rowResponsibility =
+					row.responsibility ??
+					selectedChecksheet?.["check-points"]?.[index]?.responsibility ??
+					"";
+				const acceptedResponsibilities = splitResponsibilities(rowResponsibility);
+				return (
+					acceptedResponsibilities.length === 0 ||
+					acceptedResponsibilities.includes(normalizedSessionRole)
+				);
+			}),
+		[selectedRows, selectedChecksheet, normalizedSessionRole]
+	);
+
+	const canEditAnyCheckpoint = useMemo(
+		() => rowEditPermissions.some(Boolean),
+		[rowEditPermissions]
+	);
 
 	const saveChecksheetData = async (status: "in_progress" | "completed") => {
 		if (!selectedChecksheet || !date) return false;
@@ -786,7 +832,8 @@ export default function DigitalChecksheetListPage() {
 														? rawValue.join(", ")
 														: String(rawValue ?? "");
 
-												if (!config.input || isReadOnlyChecksheet) {
+													const canEditRow = rowEditPermissions[rowIndex] ?? false;
+												if (!config.input || isReadOnlyChecksheet || !canEditRow) {
 														return (
 															<td key={key} className={detailCellClassName}>
 																{displayValue}
@@ -849,13 +896,13 @@ export default function DigitalChecksheetListPage() {
 								</tbody>
 							</table>
 						</div>
-						{(!selectedResolvedDataItem || (selectedResolvedDataItem.status !== "completed" && selectedResolvedDataItem.status !== "approved")) || isQueryRaised ? (
+						{((!selectedResolvedDataItem || (selectedResolvedDataItem.status !== "completed" && selectedResolvedDataItem.status !== "approved")) || isQueryRaised) && canEditAnyCheckpoint ? (
 							<div className="mt-4 flex justify-end gap-3">
 								<Button
 									type="button"
 									variant="outline"
 									onClick={handleSaveDraft}
-									disabled={saving}
+									disabled={saving || !canEditAnyCheckpoint}
 									className="rounded-lg border-[rgba(34,197,94,0.22)] bg-[linear-gradient(135deg,rgba(240,253,244,0.96),rgba(220,252,231,0.92))] text-[#166534]"
 								>
 									{saving ? "Saving..." : "Save Draft"}
@@ -863,6 +910,7 @@ export default function DigitalChecksheetListPage() {
 								<Button
 									type="button"
 									onClick={handleReview}
+									disabled={!canEditAnyCheckpoint}
 									className="rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white"
 								>
 									Review
@@ -874,41 +922,6 @@ export default function DigitalChecksheetListPage() {
 
 				{selectedChecksheet ? (
 					<div className={sectionClassName}>
-						{selectedResolvedDataItem?.approvalHistory && selectedResolvedDataItem.approvalHistory.length > 0 ? (
-							<div className="mb-5 rounded-xl border border-slate-200 bg-[rgba(248,250,252,0.95)] p-4">
-								<p className="mb-3 font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
-									Approval History
-								</p>
-								<div className="space-y-3">
-									{selectedResolvedDataItem.approvalHistory.map((entry, index) => (
-										<div
-											key={`${entry.stage}-${entry.action}-${entry.actedAt}-${index}`}
-											className="rounded-xl border border-slate-200 bg-white p-3"
-										>
-											<div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-												<div>
-													<p className="text-sm font-semibold text-slate-800">
-														{index + 1}. {getApprovalStageLabel(entry.stage)}
-													</p>
-													<p className="text-xs text-slate-500">
-														{entry.actorName || entry.actorUsername || "System"} on {formatDisplayDateTime(entry.actedAt)}
-													</p>
-													{entry.remarks ? (
-														<p className="mt-1 text-xs text-slate-500">Remarks: {entry.remarks}</p>
-													) : null}
-												</div>
-												<div className="flex items-center gap-3">
-													<span className={getHistoryBadgeClassName(entry.action)}>
-														{getApprovalActionLabel(entry.action)}
-													</span>
-												</div>
-											</div>
-										</div>
-									))}
-								</div>
-							</div>
-						) : null}
-
 						{visibleApprovalStages.length > 0 && !isQueryRaised && !isApprovalCompleted ? (
 							<>
 								<p className="mb-4 font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
@@ -998,6 +1011,41 @@ export default function DigitalChecksheetListPage() {
 									})}
 								</div>
 							</>
+						) : null}
+
+						{selectedResolvedDataItem?.approvalHistory && selectedResolvedDataItem.approvalHistory.length > 0 ? (
+							<div className={`${visibleApprovalStages.length > 0 && !isQueryRaised && !isApprovalCompleted ? "mt-5" : ""} rounded-xl border border-slate-200 bg-[rgba(248,250,252,0.95)] p-4`}>
+								<p className="mb-3 font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
+									Approval History
+								</p>
+								<div className="space-y-3">
+									{selectedResolvedDataItem.approvalHistory.map((entry, index) => (
+										<div
+											key={`${entry.stage}-${entry.action}-${entry.actedAt}-${index}`}
+											className="rounded-xl border border-slate-200 bg-white p-3"
+										>
+											<div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+												<div>
+													<p className="text-sm font-semibold text-slate-800">
+														{index + 1}. {getApprovalStageLabel(entry.stage)}
+													</p>
+													<p className="text-xs text-slate-500">
+														{entry.actorName || entry.actorUsername || "System"} on {formatDisplayDateTime(entry.actedAt)}
+													</p>
+													{entry.remarks ? (
+														<p className="mt-1 text-xs text-slate-500">Remarks: {entry.remarks}</p>
+													) : null}
+												</div>
+												<div className="flex items-center gap-3">
+													<span className={getHistoryBadgeClassName(entry.action)}>
+														{getApprovalActionLabel(entry.action)}
+													</span>
+												</div>
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
 						) : null}
 					</div>
 				) : null}

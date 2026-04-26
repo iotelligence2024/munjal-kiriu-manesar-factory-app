@@ -1266,7 +1266,7 @@ app.patch("/api/department-master/:id", async (req, res) => {
 		const updatedDepartment = await DepartmentMaster.findByIdAndUpdate(
 			req.params.id,
 			{ name: normalizedName },
-			{ new: true }
+			{ returnDocument: "after" }
 		).lean();
 
 		if (!updatedDepartment) {
@@ -1601,7 +1601,7 @@ app.post("/api/checksheet-data", async (req, res) => {
 				},
 			},
 			{
-				new: true,
+				returnDocument: "after",
 				upsert: true,
 				setDefaultsOnInsert: true,
 			}
@@ -1813,7 +1813,7 @@ app.patch("/api/role-master/:id", async (req, res) => {
 		const updatedRole = await RoleMaster.findByIdAndUpdate(
 			req.params.id,
 			{ name: normalizedName },
-			{ new: true }
+			{ returnDocument: "after" }
 		).lean();
 
 		if (!updatedRole) {

@@ -717,7 +717,28 @@ export default function TravelExpenseStatementPage() {
 
 			if (!response.ok) throw new Error(payload?.message ?? "Unable to load travel expense statements.");
 
-			setSubmissionList(Array.isArray(payload?.items) ? payload.items : []);
+			const items = Array.isArray(payload?.items) ? payload.items as SubmissionSummary[] : [];
+			const normalizedDepartment = session?.department?.trim().toLowerCase() ?? "";
+			const normalizedRole = session?.role?.trim().toLowerCase() ?? "";
+			const normalizedUsername = session?.username?.trim().toLowerCase() ?? "";
+			const normalizedEmployeeCode = session?.employee_code?.trim().toLowerCase() ?? "";
+			const isHodRole = normalizedRole.includes("hod");
+			const isAdminRole = normalizedRole.includes("admin");
+			const isHrOrAdminApprover =
+				(normalizedDepartment.includes("hr") && isHodRole) ||
+				(normalizedDepartment.includes("admin") && (isHodRole || isAdminRole));
+			const isFinanceApprover = normalizedDepartment.includes("finance") && isHodRole;
+			const isAssignedApprovingAuthority = items.some(
+				(item) =>
+					item.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername
+			);
+			const canViewAllSummaries = isHrOrAdminApprover || isFinanceApprover || isAssignedApprovingAuthority;
+
+			setSubmissionList(
+				canViewAllSummaries
+					? items
+					: items.filter((item) => item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode)
+			);
 		} catch (error) {
 			setSummaryError(
 				error instanceof TypeError
@@ -1459,7 +1480,7 @@ export default function TravelExpenseStatementPage() {
 												</div>
 												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.hrHod.approved && canHrApprove ? (
 													<div className="mt-4 space-y-3">
-														<Textarea value={hrRemarks} onInput={(e) => setHrRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem]`} />
+														<Textarea value={hrRemarks} onInput={(e) => setHrRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
 														<div className="flex gap-3">
 															<Button type="button" onClick={() => void handleApproval("hrHod", "approve")} disabled={approvalLoading} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
 															<Button type="button" variant="outline" onClick={() => void handleApproval("hrHod", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
@@ -1498,7 +1519,7 @@ export default function TravelExpenseStatementPage() {
 													</div>
 													{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.financeHod.approved && canFinanceApprove && selectedSubmission.approvalFlow.hrHod.approved ? (
 														<div className="space-y-3">
-															<Textarea value={financeRemarks} onInput={(e) => setFinanceRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem]`} />
+															<Textarea value={financeRemarks} onInput={(e) => setFinanceRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
 															<div className="flex gap-3">
 																<Button type="button" onClick={() => void handleApproval("financeHod", "approve")} disabled={approvalLoading || !selectedAuthorityUsername} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
 																<Button type="button" variant="outline" onClick={() => void handleApproval("financeHod", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
@@ -1528,7 +1549,7 @@ export default function TravelExpenseStatementPage() {
 												</div>
 												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.approvingAuthority.action && canApprovingAuthorityApprove && selectedSubmission.approvalFlow.financeHod.approved ? (
 													<div className="mt-3 space-y-3">
-														<Textarea value={authorityRemarks} onInput={(e) => setAuthorityRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem]`} />
+														<Textarea value={authorityRemarks} onInput={(e) => setAuthorityRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
 														<div className="flex gap-3">
 															<Button type="button" onClick={() => void handleApproval("approvingAuthority", "approve")} disabled={approvalLoading} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
 															<Button type="button" variant="outline" onClick={() => void handleApproval("approvingAuthority", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>

@@ -180,6 +180,8 @@ const fieldSurfaceClass =
 	"h-10 sm:h-11 !rounded-none !border-0 !bg-transparent px-0 text-sm text-[#17181d] placeholder:text-[#8c98a8] !shadow-none outline-none !ring-0 focus:!bg-transparent focus:outline-none focus:!ring-0 focus:!border-0 focus:!shadow-none focus-visible:outline-none focus-visible:!ring-0 focus-visible:ring-offset-0 focus-visible:!shadow-none";
 const readOnlyFieldSurfaceClass =
 	`${fieldSurfaceClass} disabled:cursor-default disabled:text-slate-700 disabled:opacity-100`;
+const approvalRemarksTextareaClass =
+	"min-h-[7rem] resize-none overflow-hidden rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-white px-4 py-3 text-sm text-[#17181d] placeholder:text-[#8c98a8] shadow-none outline-none ring-0 focus:border-[rgba(59,130,246,0.22)] focus:outline-none focus:ring-0";
 
 type FieldProps = {
 	label: string;
@@ -411,7 +413,28 @@ export default function TravelRequisitionFormPage() {
 				throw new Error(payload?.message ?? "Unable to load travel requisitions.");
 			}
 
-			setSubmissionList(Array.isArray(payload?.items) ? payload.items : []);
+			const items = Array.isArray(payload?.items) ? payload.items as SubmissionSummary[] : [];
+			const normalizedDepartment = session?.department?.trim().toLowerCase() ?? "";
+			const normalizedRole = session?.role?.trim().toLowerCase() ?? "";
+			const normalizedUsername = session?.username?.trim().toLowerCase() ?? "";
+			const normalizedEmployeeCode = session?.employee_code?.trim().toLowerCase() ?? "";
+			const isHodRole = normalizedRole.includes("hod");
+			const isAdminRole = normalizedRole.includes("admin");
+			const isHrOrAdminApprover =
+				(normalizedDepartment.includes("hr") && isHodRole) ||
+				(normalizedDepartment.includes("admin") && (isHodRole || isAdminRole));
+			const isFinanceApprover = normalizedDepartment.includes("finance") && isHodRole;
+			const isAssignedApprovingAuthority = items.some(
+				(item) =>
+					item.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername
+			);
+			const canViewAllSummaries = isHrOrAdminApprover || isFinanceApprover || isAssignedApprovingAuthority;
+
+			setSubmissionList(
+				canViewAllSummaries
+					? items
+					: items.filter((item) => item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode)
+			);
 		} catch (error) {
 			setSummaryError(
 				error instanceof TypeError
@@ -1159,7 +1182,7 @@ export default function TravelRequisitionFormPage() {
 															value={hrRemarks}
 															onInput={(e) => setHrRemarks(e.currentTarget.value)}
 															placeholder="Enter remarks for approval or query"
-															className={fieldSurfaceClass}
+															className={approvalRemarksTextareaClass}
 														/>
 														<div className="flex gap-3">
 															<Button
@@ -1250,7 +1273,7 @@ export default function TravelRequisitionFormPage() {
 																value={financeRemarks}
 																onInput={(e) => setFinanceRemarks(e.currentTarget.value)}
 																placeholder="Enter remarks for approval or query"
-																className={fieldSurfaceClass}
+																className={approvalRemarksTextareaClass}
 															/>
 															<div className="flex gap-3">
 																<Button
@@ -1317,7 +1340,7 @@ export default function TravelRequisitionFormPage() {
 															value={authorityRemarks}
 															onInput={(e) => setAuthorityRemarks(e.currentTarget.value)}
 															placeholder="Enter remarks for approval or query"
-															className={fieldSurfaceClass}
+															className={approvalRemarksTextareaClass}
 														/>
 														<div className="flex gap-3">
 															<Button
