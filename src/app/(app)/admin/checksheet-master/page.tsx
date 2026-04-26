@@ -114,6 +114,8 @@ const fieldLabelClassName = "text-sm font-medium text-[#4d5560]";
 const tableHeadClassName = "border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700 align-top";
 const tableCellClassName = "border border-slate-200 px-3 py-2.5 text-slate-800 align-top";
 const summaryTableCellClassName = `${tableCellClassName} text-center`;
+const OTHER_LINE_OPTION = "__other__";
+const OTHER_MODEL_OPTION = "__other_model__";
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -277,6 +279,8 @@ export default function ChecksheetMasterPage() {
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
+	const [lineNameSelection, setLineNameSelection] = useState(OTHER_LINE_OPTION);
+	const [modelSelection, setModelSelection] = useState(OTHER_MODEL_OPTION);
 
 	const enabledMappingFields = useMemo(
 		() =>
@@ -289,6 +293,28 @@ export default function ChecksheetMasterPage() {
 	const activeChecksheet = useMemo(
 		() => items.find((item) => item.id === editingId) ?? null,
 		[editingId, items]
+	);
+	const lineNameOptions = useMemo(
+		() =>
+			Array.from(
+				new Set(
+					items
+						.map((item) => String(item["line-name"] ?? "").trim())
+						.filter(Boolean)
+				)
+			).sort((first, second) => first.localeCompare(second)),
+		[items]
+	);
+	const modelOptions = useMemo(
+		() =>
+			Array.from(
+				new Set(
+					items
+						.map((item) => String(item.model ?? "").trim())
+						.filter(Boolean)
+				)
+			).sort((first, second) => first.localeCompare(second)),
+		[items]
 	);
 
 	const autoRevisionNo = activeChecksheet ? Number(activeChecksheet["revision-no"] ?? 1) + 1 : 1;
@@ -348,10 +374,20 @@ export default function ChecksheetMasterPage() {
 		setCheckPoints([buildEmptyCheckPointRow(defaultMappingFields)]);
 		setAuthorizationRows([buildEmptyAuthorizationRow()]);
 		setEditingId("");
+		setLineNameSelection(OTHER_LINE_OPTION);
+		setModelSelection(OTHER_MODEL_OPTION);
 	};
 
 	const handleOpenCreateModal = () => {
 		resetForm();
+		if (lineNameOptions.length > 0) {
+			setLineNameSelection(lineNameOptions[0]);
+			setForm((current) => ({ ...current, "line-name": lineNameOptions[0] }));
+		}
+		if (modelOptions.length > 0) {
+			setModelSelection(modelOptions[0]);
+			setForm((current) => ({ ...current, model: modelOptions[0] }));
+		}
 		setError(null);
 		setMessage(null);
 		setModalOpen(true);
@@ -385,6 +421,8 @@ export default function ChecksheetMasterPage() {
 			model: item.model ?? "",
 			status: item.status ?? "active",
 		});
+		setLineNameSelection(item["line-name"] ?? OTHER_LINE_OPTION);
+		setModelSelection(item.model ?? OTHER_MODEL_OPTION);
 		setMappingFields(nextMappingFields);
 		setCheckPoints(nextCheckPoints);
 		setAuthorizationRows(authorizationToRows(item.authorization));
@@ -587,6 +625,30 @@ export default function ChecksheetMasterPage() {
 		}
 	};
 
+	const handleDeleteChecksheet = async (item: ChecksheetItem) => {
+		const confirmed = window.confirm(`Delete checksheet "${item.name}"? This action cannot be undone.`);
+		if (!confirmed) return;
+
+		try {
+			setError(null);
+			setMessage(null);
+
+			const response = await fetch(`${API_BASE_URL}/api/checksheet-master/${item.id}`, {
+				method: "DELETE",
+			});
+			const payload = await response.json().catch(() => null);
+
+			if (!response.ok) {
+				throw new Error(payload?.message ?? "Unable to delete checksheet.");
+			}
+
+			setMessage(payload?.message ?? "Checksheet deleted successfully.");
+			await loadData();
+		} catch (deleteError) {
+			setError(deleteError instanceof Error ? deleteError.message : "Unable to delete checksheet.");
+		}
+	};
+
 	const renderFormSections = () => (
 		<div className="space-y-4">
 			{error ? <div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{error}</div> : null}
@@ -601,14 +663,80 @@ export default function ChecksheetMasterPage() {
 					<div className="space-y-2">
 						<Label className={fieldLabelClassName}>Line Name</Label>
 						<div className={inputShellClassName}>
-							<Input value={form["line-name"]} disabled={Boolean(editingId)} onChange={(e) => handleFormChange("line-name", e.currentTarget.value)} className={inputClassName} style={flatInputStyle} />
+							{editingId ? (
+								<Input value={form["line-name"]} disabled className={inputClassName} style={flatInputStyle} />
+							) : (
+								<Select
+									value={lineNameSelection}
+									onValueChange={(value) => {
+										setLineNameSelection(value);
+										handleFormChange("line-name", value === OTHER_LINE_OPTION ? "" : value);
+									}}
+								>
+									<SelectTrigger className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+										<SelectValue placeholder="Select existing line name or Other" />
+									</SelectTrigger>
+									<SelectContent>
+										{lineNameOptions.map((lineName) => (
+											<SelectItem key={lineName} value={lineName}>
+												{lineName}
+											</SelectItem>
+										))}
+										<SelectItem value={OTHER_LINE_OPTION}>Other</SelectItem>
+									</SelectContent>
+								</Select>
+							)}
 						</div>
+						{!editingId && lineNameSelection === OTHER_LINE_OPTION ? (
+							<div className={inputShellClassName}>
+								<Input
+									value={form["line-name"]}
+									onChange={(e) => handleFormChange("line-name", e.currentTarget.value)}
+									placeholder="Enter new line name"
+									className={inputClassName}
+									style={flatInputStyle}
+								/>
+							</div>
+						) : null}
 					</div>
 					<div className="space-y-2">
 						<Label className={fieldLabelClassName}>Model</Label>
 						<div className={inputShellClassName}>
-							<Input value={form.model} onChange={(e) => handleFormChange("model", e.currentTarget.value)} className={inputClassName} style={flatInputStyle} />
+							{editingId ? (
+								<Input value={form.model} disabled className={inputClassName} style={flatInputStyle} />
+							) : (
+								<Select
+									value={modelSelection}
+									onValueChange={(value) => {
+										setModelSelection(value);
+										handleFormChange("model", value === OTHER_MODEL_OPTION ? "" : value);
+									}}
+								>
+									<SelectTrigger className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+										<SelectValue placeholder="Select existing model or Other" />
+									</SelectTrigger>
+									<SelectContent>
+										{modelOptions.map((model) => (
+											<SelectItem key={model} value={model}>
+												{model}
+											</SelectItem>
+										))}
+										<SelectItem value={OTHER_MODEL_OPTION}>Other</SelectItem>
+									</SelectContent>
+								</Select>
+							)}
 						</div>
+						{!editingId && modelSelection === OTHER_MODEL_OPTION ? (
+							<div className={inputShellClassName}>
+								<Input
+									value={form.model}
+									onChange={(e) => handleFormChange("model", e.currentTarget.value)}
+									placeholder="Enter new model"
+									className={inputClassName}
+									style={flatInputStyle}
+								/>
+							</div>
+						) : null}
 					</div>
 					<div className="space-y-2">
 						<Label className={fieldLabelClassName}>Revision No</Label>
@@ -920,12 +1048,18 @@ export default function ChecksheetMasterPage() {
 										<td className={summaryTableCellClassName}>{item.status}</td>
 										<td className={summaryTableCellClassName}>{item["check-points"]?.length ?? 0}</td>
 										<td className={summaryTableCellClassName}>
-											<div className="flex items-center justify-center">
+											<div className="flex items-center justify-center gap-2">
 												<Button type="button" variant="outline" onClick={(event) => {
 													event.stopPropagation();
 													handleEditExisting(item);
 												}} className="h-8 rounded-md border-slate-300 bg-white px-2 text-xs text-slate-700" title="Edit checksheet">
 													<Pencil className="h-3.5 w-3.5" />
+												</Button>
+												<Button type="button" variant="outline" onClick={(event) => {
+													event.stopPropagation();
+													void handleDeleteChecksheet(item);
+												}} className="h-8 rounded-md border-[rgba(220,38,38,0.18)] bg-[rgba(254,242,242,0.9)] px-2 text-xs text-[#b91c1c]" title="Delete checksheet">
+													<Trash2 className="h-3.5 w-3.5" />
 												</Button>
 											</div>
 										</td>

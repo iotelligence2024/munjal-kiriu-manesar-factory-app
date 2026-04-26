@@ -1475,6 +1475,31 @@ app.patch("/api/checksheet-master/:id", async (req, res) => {
 	}
 });
 
+app.delete("/api/checksheet-master/:id", async (req, res) => {
+	try {
+		await connectToDatabase();
+
+		const deletedChecksheet = await ChecksheetMaster.findByIdAndDelete(req.params.id).lean();
+
+		if (!deletedChecksheet) {
+			return res.status(404).json({
+				ok: false,
+				message: "Checksheet not found.",
+			});
+		}
+
+		return res.status(200).json({
+			ok: true,
+			message: "Checksheet deleted successfully.",
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to delete checksheet.",
+		});
+	}
+});
+
 app.get("/api/checksheet-data", async (req, res) => {
 	try {
 		await connectToDatabase();
