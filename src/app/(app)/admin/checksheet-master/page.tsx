@@ -885,6 +885,7 @@ export default function ChecksheetMasterPage() {
 														<SelectItem value="__empty__">Select frequency</SelectItem>
 														<SelectItem value="Daily">Daily</SelectItem>
 														<SelectItem value="Weekly">Weekly</SelectItem>
+														<SelectItem value="Monthly">Monthly</SelectItem>
 													</SelectContent>
 												</Select>
 											) : (
@@ -967,6 +968,7 @@ export default function ChecksheetMasterPage() {
 												<SelectItem value="__empty__">Select frequency</SelectItem>
 												<SelectItem value="Daily">Daily</SelectItem>
 												<SelectItem value="Weekly">Weekly</SelectItem>
+												<SelectItem value="Monthly">Monthly</SelectItem>
 											</SelectContent>
 										</Select>
 									</td>
