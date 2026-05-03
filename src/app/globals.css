@@ -271,9 +271,18 @@ button:active {
 	transform: translateY(0);
 }
 
-:focus-visible {
+:focus-visible:not(input):not(textarea):not(select):not([data-slot="input"]):not([data-slot="textarea"]):not([data-slot="select-trigger"]) {
 	outline: 2px solid var(--ring);
 	outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[data-slot="input"]:focus-visible,
+[data-slot="textarea"]:focus-visible,
+[data-slot="select-trigger"]:focus-visible {
+	outline: none !important;
 }
 
 .protected-wrapper {

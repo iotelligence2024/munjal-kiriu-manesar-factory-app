@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-preact";
 import type { JSX } from "preact";
 import { useSession } from "../../../context/SessionContext";
@@ -54,15 +54,6 @@ type ApprovalHistoryEntry = {
 	statusAfterAction: string;
 };
 
-type ApprovedUserOption = {
-	id: string;
-	username: string;
-	employee_name: string;
-	employee_code: string;
-	department: string;
-	role: string;
-};
-
 type TicketRow = {
 	departureDate: string;
 	fromPlace: string;
@@ -101,8 +92,6 @@ type ConveyanceRow = {
 type HeadExpenseRow = {
 	head: string;
 	paidBy: string;
-	drCr: string;
-	code: string;
 	amount: string;
 };
 
@@ -128,6 +117,92 @@ type SubmissionSummary = {
 	approvalFlow: ApprovalFlow;
 	approvalHistory: ApprovalHistoryEntry[];
 	details: Record<string, unknown>;
+};
+
+type TravelRequisitionSummary = {
+	id: string;
+	date: string;
+	type: string;
+	status: string;
+	employeeCode: string;
+	itineraryRows?: Array<{ date?: string; timings?: string; depart?: string; arrive?: string }>;
+};
+
+const getTravelRequisitionDateRange = (item: TravelRequisitionSummary) => {
+	const itineraryDates = (Array.isArray(item.itineraryRows) ? item.itineraryRows : [])
+		.map((row) => String(row?.date ?? "").trim())
+		.filter(Boolean)
+		.sort();
+
+	if (itineraryDates.length === 0) {
+		const fallback = String(item.date ?? "").trim();
+		return fallback ? `${fallback} - ${fallback}` : "Date N/A";
+	}
+
+	return `${itineraryDates[0]} - ${itineraryDates[itineraryDates.length - 1]}`;
+};
+
+const getTravelRequisitionDateRangeDisplay = (item: TravelRequisitionSummary) => {
+	const range = getTravelRequisitionDateRange(item);
+	const [start, end] = range.split(" - ");
+	if (!start || !end) return range;
+	return `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
+};
+
+const extractTimesFromText = (value: string) => {
+	const matches = value.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) ?? [];
+	return matches;
+};
+
+const normalizeTimeForInput = (value: string) => {
+	const rawValue = String(value ?? "").trim();
+	if (!rawValue) return "";
+	const hhmmMatch = rawValue.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+	if (hhmmMatch) {
+		return `${hhmmMatch[1].padStart(2, "0")}:${hhmmMatch[2]}`;
+	}
+	const parsedDate = new Date(rawValue);
+	if (!Number.isNaN(parsedDate.getTime())) {
+		return `${pad(parsedDate.getHours())}:${pad(parsedDate.getMinutes())}`;
+	}
+	return "";
+};
+
+const getTravelWindowFromRequisition = (item: TravelRequisitionSummary) => {
+	const datedRows = (Array.isArray(item.itineraryRows) ? item.itineraryRows : [])
+		.map((row) => ({
+			date: String(row?.date ?? "").trim(),
+			timings: String(row?.timings ?? "").trim(),
+			depart: String(row?.depart ?? "").trim(),
+			arrive: String(row?.arrive ?? "").trim(),
+		}))
+		.filter((row) => row.date)
+		.sort((a, b) => a.date.localeCompare(b.date));
+
+	if (datedRows.length === 0) {
+		const fallbackDate = String(item.date ?? "").trim();
+		return {
+			departureDate: fallbackDate,
+			arrivalDate: fallbackDate,
+			departureTime: "",
+			arrivalTime: "",
+		};
+	}
+
+	const firstRow = datedRows[0];
+	const lastRow = datedRows[datedRows.length - 1];
+	const firstTimes = extractTimesFromText(firstRow.timings);
+	const lastTimes = extractTimesFromText(lastRow.timings);
+
+	const departureTime = normalizeTimeForInput(firstTimes[0] || firstRow.depart || "");
+	const arrivalTime = normalizeTimeForInput(lastTimes[lastTimes.length - 1] || lastRow.arrive || "");
+
+	return {
+		departureDate: firstRow.date,
+		arrivalDate: lastRow.date,
+		departureTime,
+		arrivalTime,
+	};
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:54321";
@@ -229,6 +304,11 @@ const formatMoneyDisplay = (value: number) => {
 	return safeValue.toFixed(2);
 };
 
+const formatSignedMoneyDisplay = (value: number) => {
+	const safeValue = Number.isFinite(value) ? value : 0;
+	return safeValue.toFixed(2);
+};
+
 const normalizePaidByValue = (value: string) => value.trim().toLowerCase();
 
 const getLegacyMoneyAmount = (value: unknown) => {
@@ -300,12 +380,10 @@ const normalizeHeadExpenseRows = (rows: unknown): HeadExpenseRow[] =>
 	Array.isArray(rows) && rows.length
 		? rows.map((row, index) => {
 			const record = (row ?? {}) as Record<string, unknown>;
-			const fallback = defaultHeadExpenseRows()[index] ?? { head: "", paidBy: "", drCr: "", code: "", amount: "" };
+			const fallback = defaultHeadExpenseRows()[index] ?? { head: "", paidBy: "", amount: "" };
 			return {
 				head: String(record.head ?? fallback.head),
 				paidBy: String(record.paidBy ?? fallback.paidBy),
-				drCr: String(record.drCr ?? fallback.drCr),
-				code: String(record.code ?? fallback.code),
 				amount: getLegacyMoneyAmount(record),
 			};
 		})
@@ -341,9 +419,8 @@ const getSummaryStatusClassName = (status: string) => {
 };
 
 const getApprovalStageLabel = (stage: string) => {
-	if (stage === "hrHod") return "HR HOD / Admin HOD";
+	if (stage === "hrHod") return "Reporting Manager";
 	if (stage === "financeHod") return "Finance HOD";
-	if (stage === "approvingAuthority") return "Approving Authority";
 	if (stage === "requestor") return "Requestor";
 	return stage;
 };
@@ -373,6 +450,8 @@ const textareaSurfaceClass =
 	"!h-auto min-h-[7rem] resize-none !rounded-none !border-0 !bg-transparent px-0 py-3 text-sm text-[#17181d] placeholder:text-[#8c98a8] !shadow-none outline-none !ring-0 focus:!bg-transparent focus:outline-none focus:!ring-0 focus:!border-0 focus:!shadow-none focus-visible:outline-none focus-visible:!ring-0 focus-visible:ring-offset-0 focus-visible:!shadow-none";
 const inlineTextareaShellClass = `${fieldShellClass} py-0`;
 const inlineTextareaClass = `${textareaSurfaceClass} min-h-[9rem]`;
+const approvalTextareaClass =
+	"min-h-[5.5rem] resize-none rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-white px-4 py-3 text-sm text-[#17181d] placeholder:text-[#8c98a8] shadow-none outline-none ring-0 focus:border-[rgba(30,64,175,0.35)] focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
 type FieldProps = {
 	label: string;
@@ -422,19 +501,25 @@ const createConveyanceRow = (): ConveyanceRow => ({
 });
 
 const defaultHeadExpenseRows = (): HeadExpenseRow[] => ([
-	{ head: "Cost of Tickets", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Conveyance", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Daily Allowance (Boarding)", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Lodging", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Pvt. Stay Allowance (Lodging)", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Incidental Expense", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Telephones", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Postage & Telegram", paidBy: "", drCr: "", code: "", amount: "" },
-	{ head: "Others", paidBy: "", drCr: "", code: "", amount: "" },
+	{ head: "Cost of Tickets", paidBy: "", amount: "" },
+	{ head: "Conveyance", paidBy: "", amount: "" },
+	{ head: "Daily Allowance (Boarding)", paidBy: "", amount: "" },
+	{ head: "Lodging", paidBy: "", amount: "" },
+	{ head: "Pvt. Stay Allowance (Lodging)", paidBy: "", amount: "" },
+	{ head: "Incidental Expense", paidBy: "", amount: "" },
+	{ head: "Telephones", paidBy: "", amount: "" },
+	{ head: "Postage & Telegram", paidBy: "", amount: "" },
+	{ head: "Others", paidBy: "", amount: "" },
 ]);
 
 export default function TravelExpenseStatementPage() {
 	const { session } = useSession();
+	const autoFilledTravelWindowRef = useRef({
+		departureDate: "",
+		departureTime: "",
+		arrivalDate: "",
+		arrivalTime: "",
+	});
 	const [open, setOpen] = useState(false);
 	const [formKey, setFormKey] = useState(0);
 	const [submissionList, setSubmissionList] = useState<SubmissionSummary[]>([]);
@@ -444,17 +529,13 @@ export default function TravelExpenseStatementPage() {
 	const [submitLoading, setSubmitLoading] = useState(false);
 	const [selectedSubmission, setSelectedSubmission] = useState<SubmissionSummary | null>(null);
 	const [isEditMode, setIsEditMode] = useState(false);
-	const [approvedUsers, setApprovedUsers] = useState<ApprovedUserOption[]>([]);
-	const [approvedUsersLoading, setApprovedUsersLoading] = useState(false);
 	const [approvalLoading, setApprovalLoading] = useState(false);
 	const [approvalError, setApprovalError] = useState<string | null>(null);
 	const [hrRemarks, setHrRemarks] = useState("");
 	const [financeRemarks, setFinanceRemarks] = useState("");
-	const [authorityRemarks, setAuthorityRemarks] = useState("");
 
 	const [employeeName, setEmployeeName] = useState(session?.employee_name ?? "");
 	const [employeeCode, setEmployeeCode] = useState(session?.employee_code ?? "");
-	const [grade, setGrade] = useState("");
 	const [departmentBranch, setDepartmentBranch] = useState(session?.department ?? "");
 	const [designation, setDesignation] = useState(session?.role ?? "");
 	const [expenseDate, setExpenseDate] = useState("");
@@ -463,15 +544,16 @@ export default function TravelExpenseStatementPage() {
 	const [departureTime, setDepartureTime] = useState("");
 	const [arrivalDate, setArrivalDate] = useState("");
 	const [arrivalTime, setArrivalTime] = useState("");
+	const [, setHasUserAdjustedTravelWindow] = useState(false);
 	const [durationDays, setDurationDays] = useState("");
 	const [durationHours, setDurationHours] = useState("");
-	const [productDeptCode, setProductDeptCode] = useState("");
-	const [deptCodeChargeable, setDeptCodeChargeable] = useState("");
 	const [townsTravelled, setTownsTravelled] = useState("");
 	const [businessAttended, setBusinessAttended] = useState("");
+	const [linkedTravelRequisitionId, setLinkedTravelRequisitionId] = useState("");
+	const [availableTravelRequisitions, setAvailableTravelRequisitions] = useState<TravelRequisitionSummary[]>([]);
 	const [advanceTakenFromCompany, setAdvanceTakenFromCompany] = useState("");
 	const [amountInWords, setAmountInWords] = useState("");
-	const [selectedAuthorityUsername, setSelectedAuthorityUsername] = useState("");
+	const [userReportingManagerMap, setUserReportingManagerMap] = useState<Record<string, string>>({});
 
 	const [headExpenseRows, setHeadExpenseRows] = useState<HeadExpenseRow[]>(defaultHeadExpenseRows());
 	const [ticketRows, setTicketRows] = useState<TicketRow[]>(Array.from({ length: MIN_TICKET_ROWS }, () => createTicketRow()));
@@ -529,8 +611,11 @@ export default function TravelExpenseStatementPage() {
 		if (normalizePaidByValue(row.paidBy) !== "paid by self") return sum;
 		return sum + parseMoneyValue(row.amount);
 	}, 0);
+	const advanceTakenFromCompanyValue = parseMoneyValue(advanceTakenFromCompany);
+	const settlementValue = payableFromCompanyValue - advanceTakenFromCompanyValue;
 	const expensesPaidByCompanyDisplay = formatMoneyDisplay(expensesPaidByCompanyValue);
-	const payableFromCompanyDisplay = formatMoneyDisplay(payableFromCompanyValue);
+	const paidBySelfDisplay = formatMoneyDisplay(payableFromCompanyValue);
+	const settlementDisplay = formatSignedMoneyDisplay(settlementValue);
 	const hasTravelWindow = Boolean(departureDate && departureTime && arrivalDate && arrivalTime);
 	const isTravelWindowInvalid =
 		hasTravelWindow &&
@@ -616,9 +701,14 @@ export default function TravelExpenseStatementPage() {
 	}, [dailyExpenseRows]);
 
 	const resetForm = () => {
+		autoFilledTravelWindowRef.current = {
+			departureDate: "",
+			departureTime: "",
+			arrivalDate: "",
+			arrivalTime: "",
+		};
 		setEmployeeName(session?.employee_name ?? "");
 		setEmployeeCode(session?.employee_code ?? "");
-		setGrade("");
 		setDepartmentBranch(session?.department ?? "");
 		setDesignation(session?.role ?? "");
 		setExpenseDate("");
@@ -627,18 +717,16 @@ export default function TravelExpenseStatementPage() {
 		setDepartureTime("");
 		setArrivalDate("");
 		setArrivalTime("");
+		setHasUserAdjustedTravelWindow(false);
 		setDurationDays("");
 		setDurationHours("");
-		setProductDeptCode("");
-		setDeptCodeChargeable("");
 		setTownsTravelled("");
 		setBusinessAttended("");
+		setLinkedTravelRequisitionId("");
 		setAdvanceTakenFromCompany("");
 		setAmountInWords("");
-		setSelectedAuthorityUsername("");
 		setHrRemarks("");
 		setFinanceRemarks("");
-		setAuthorityRemarks("");
 		setHeadExpenseRows(defaultHeadExpenseRows());
 		setTicketRows(Array.from({ length: MIN_TICKET_ROWS }, () => createTicketRow()));
 		setDailyExpenseRows(Array.from({ length: 8 }, () => createDailyExpenseRow()));
@@ -659,31 +747,34 @@ export default function TravelExpenseStatementPage() {
 
 	const hydrateFormFromSubmission = (item: SubmissionSummary) => {
 		const details = item.details ?? {};
+		autoFilledTravelWindowRef.current = {
+			departureDate: "",
+			departureTime: "",
+			arrivalDate: "",
+			arrivalTime: "",
+		};
+		setHasUserAdjustedTravelWindow(false);
 		setEmployeeName(item.employeeName === "-" ? "" : item.employeeName);
 		setEmployeeCode(item.employeeCode === "-" ? "" : item.employeeCode);
-		setGrade(item.grade === "-" ? "" : item.grade);
 		setDepartmentBranch(item.departmentBranch === "-" ? "" : item.departmentBranch);
 		setDesignation(item.designation === "-" ? "" : item.designation);
 		setExpenseDate(item.date === "-" ? "" : item.date);
 		setVoucherNo(item.voucherNo === "-" ? "" : item.voucherNo);
 		setAdvanceTakenFromCompany(item.advanceTakenFromCompany === "-" ? "" : item.advanceTakenFromCompany);
 		setDepartureDate(String(details.departureDate ?? ""));
-		setDepartureTime(String(details.departureTime ?? ""));
+		setDepartureTime(normalizeTimeForInput(String(details.departureTime ?? details.departure_time ?? "")));
 		setArrivalDate(String(details.arrivalDate ?? ""));
-		setArrivalTime(String(details.arrivalTime ?? ""));
+		setArrivalTime(normalizeTimeForInput(String(details.arrivalTime ?? details.arrival_time ?? "")));
 		setDurationDays(String(details.durationDays ?? ""));
 		setDurationHours(String(details.durationHours ?? ""));
-		setProductDeptCode(String(details.productDeptCode ?? ""));
-		setDeptCodeChargeable(String(details.deptCodeChargeable ?? ""));
 		setTownsTravelled(String(details.townsTravelled ?? ""));
 		setBusinessAttended(String(details.businessAttended ?? ""));
+		setLinkedTravelRequisitionId(String(details.linkedTravelRequisitionId ?? ""));
 		setAmountInWords(
 			String(details.amountInWords ?? "").trim() || convertNumberToWords(Number(item.totalCostOfTour || 0))
 		);
-		setSelectedAuthorityUsername(item.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "");
 		setHrRemarks(item.approvalFlow?.hrHod?.remarks ?? "");
 		setFinanceRemarks(item.approvalFlow?.financeHod?.remarks ?? "");
-		setAuthorityRemarks(item.approvalFlow?.approvingAuthority?.remarks ?? "");
 		setHeadExpenseRows(normalizeHeadExpenseRows(details.headExpenseRows));
 		setTicketRows(normalizeTicketRows(details.ticketRows));
 		setDailyExpenseRows(normalizeDailyExpenseRows(details.dailyExpenseRows));
@@ -718,26 +809,50 @@ export default function TravelExpenseStatementPage() {
 			if (!response.ok) throw new Error(payload?.message ?? "Unable to load travel expense statements.");
 
 			const items = Array.isArray(payload?.items) ? payload.items as SubmissionSummary[] : [];
+			const userMasterResponse = await fetch(`${API_BASE_URL}/api/user-master`);
+			const userMasterPayload = await userMasterResponse.json().catch(() => null);
+			const userMasterItems = Array.isArray(userMasterPayload?.items)
+				? userMasterPayload.items as Array<Record<string, unknown>>
+				: [];
+			const reportingMap = userMasterItems.reduce<Record<string, string>>((accumulator, item) => {
+				const employeeCode = String(item.employeeCode ?? item.employee_code ?? "").trim().toLowerCase();
+				const managerEmployeeCode = String(
+					item.reportingManagerEmployeeCode ?? item.reporting_manager_employee_code ?? ""
+				)
+					.trim()
+					.toLowerCase();
+				if (employeeCode) {
+					accumulator[employeeCode] = managerEmployeeCode;
+				}
+				return accumulator;
+			}, {});
+			setUserReportingManagerMap(reportingMap);
+
 			const normalizedDepartment = session?.department?.trim().toLowerCase() ?? "";
 			const normalizedRole = session?.role?.trim().toLowerCase() ?? "";
-			const normalizedUsername = session?.username?.trim().toLowerCase() ?? "";
 			const normalizedEmployeeCode = session?.employee_code?.trim().toLowerCase() ?? "";
 			const isHodRole = normalizedRole.includes("hod");
-			const isAdminRole = normalizedRole.includes("admin");
-			const isHrOrAdminApprover =
-				(normalizedDepartment.includes("hr") && isHodRole) ||
-				(normalizedDepartment.includes("admin") && (isHodRole || isAdminRole));
 			const isFinanceApprover = normalizedDepartment.includes("finance") && isHodRole;
-			const isAssignedApprovingAuthority = items.some(
-				(item) =>
-					item.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername
-			);
-			const canViewAllSummaries = isHrOrAdminApprover || isFinanceApprover || isAssignedApprovingAuthority;
+			const isCurrentUserReportingManagerOf = (employeeCode: string) =>
+				reportingMap[employeeCode] === normalizedEmployeeCode;
+			const isAwaitingReportingManagerApproval = (item: SubmissionSummary) =>
+				!item.approvalFlow?.hrHod?.approved &&
+				(item.approvalFlow?.hrHod?.action ?? "") !== "query" &&
+				isCurrentUserReportingManagerOf(item.employeeCode?.trim().toLowerCase() ?? "");
+			const isAwaitingFinanceHodApproval = (item: SubmissionSummary) =>
+				isFinanceApprover &&
+				Boolean(item.approvalFlow?.hrHod?.approved) &&
+				!item.approvalFlow?.financeHod?.approved &&
+				(item.approvalFlow?.financeHod?.action ?? "") !== "query";
 
 			setSubmissionList(
-				canViewAllSummaries
-					? items
-					: items.filter((item) => item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode)
+				items.filter((item) => {
+					const itemEmployeeCode = item.employeeCode?.trim().toLowerCase() ?? "";
+					const isOwnRaisedStatement = itemEmployeeCode === normalizedEmployeeCode;
+					const isPendingForCurrentUser =
+						isAwaitingReportingManagerApproval(item) || isAwaitingFinanceHodApproval(item);
+					return isOwnRaisedStatement || isPendingForCurrentUser;
+				})
 			);
 		} catch (error) {
 			setSummaryError(
@@ -752,37 +867,136 @@ export default function TravelExpenseStatementPage() {
 		}
 	};
 
-	const loadApprovedUsers = async () => {
+	const loadUserReportingManagers = async () => {
 		try {
-			setApprovedUsersLoading(true);
-			const response = await fetch(`${API_BASE_URL}/api/user-master/approved-users`);
+			const response = await fetch(`${API_BASE_URL}/api/user-master`);
 			const payload = await response.json().catch(() => null);
-			if (!response.ok) throw new Error(payload?.message ?? "Unable to load approving authority options.");
-			setApprovedUsers(Array.isArray(payload?.items) ? payload.items : []);
+			if (!response.ok) throw new Error(payload?.message ?? "Unable to load user master.");
+			const items = Array.isArray(payload?.items) ? payload.items as Array<Record<string, unknown>> : [];
+			const nextMap = items.reduce<Record<string, string>>((accumulator, item) => {
+				const employeeCode = String(item.employeeCode ?? item.employee_code ?? "").trim().toLowerCase();
+				const managerEmployeeCode = String(
+					item.reportingManagerEmployeeCode ?? item.reporting_manager_employee_code ?? ""
+				)
+					.trim()
+					.toLowerCase();
+				if (employeeCode) {
+					accumulator[employeeCode] = managerEmployeeCode;
+				}
+				return accumulator;
+			}, {});
+			setUserReportingManagerMap(nextMap);
 		} catch {
-			setApprovedUsers([]);
-		} finally {
-			setApprovedUsersLoading(false);
+			setUserReportingManagerMap({});
+		}
+	};
+
+	const loadAvailableTravelRequisitions = async (
+		expenseItems: SubmissionSummary[],
+		currentLinkedId = ""
+	) => {
+		try {
+			const response = await fetch(`${API_BASE_URL}/api/travel-requisitions`);
+			const payload = await response.json().catch(() => null);
+			if (!response.ok) throw new Error(payload?.message ?? "Unable to load travel requisitions.");
+
+			const requisitions = Array.isArray(payload?.items) ? payload.items as TravelRequisitionSummary[] : [];
+			const linkedIds = new Set(
+				expenseItems
+					.map((item) => String((item.details as Record<string, unknown>)?.linkedTravelRequisitionId ?? "").trim())
+					.filter(Boolean)
+			);
+			const normalizedEmployeeCode = session?.employee_code?.trim().toLowerCase() ?? "";
+			const filtered = requisitions.filter((item) => {
+				const isOwn = item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode;
+				const isLinkedElsewhere = linkedIds.has(item.id) && item.id !== currentLinkedId;
+				return isOwn && !isLinkedElsewhere;
+			});
+			setAvailableTravelRequisitions(filtered);
+		} catch {
+			setAvailableTravelRequisitions([]);
 		}
 	};
 
 	useEffect(() => {
 		void loadSubmissionList();
-		void loadApprovedUsers();
+		void loadUserReportingManagers();
 	}, []);
+
+	useEffect(() => {
+		if (!summaryError) return;
+		window.alert(summaryError);
+		setSummaryError(null);
+	}, [summaryError]);
+
+	useEffect(() => {
+		if (!approvalError) return;
+		window.alert(approvalError);
+		setApprovalError(null);
+	}, [approvalError]);
+
+	useEffect(() => {
+		if (!submitError) return;
+		window.alert(submitError);
+		setSubmitError(null);
+	}, [submitError]);
+
+	useEffect(() => {
+		void loadAvailableTravelRequisitions(submissionList, linkedTravelRequisitionId);
+	}, [submissionList, linkedTravelRequisitionId, session?.employee_code]);
+
+	const applyTravelRequisitionTravelWindow = (requisitionId: string) => {
+		const selected = availableTravelRequisitions.find((item) => item.id === requisitionId);
+		if (!selected) return;
+		const window = getTravelWindowFromRequisition(selected);
+		const previousAutoFilled = autoFilledTravelWindowRef.current;
+		const nextAutoFilled = { ...previousAutoFilled };
+
+		const canReplaceDepartureDate = !departureDate || departureDate === previousAutoFilled.departureDate;
+		if (canReplaceDepartureDate && window.departureDate) {
+			setDepartureDate(window.departureDate);
+			nextAutoFilled.departureDate = window.departureDate;
+		}
+
+		const canReplaceArrivalDate = !arrivalDate || arrivalDate === previousAutoFilled.arrivalDate;
+		if (canReplaceArrivalDate && window.arrivalDate) {
+			setArrivalDate(window.arrivalDate);
+			nextAutoFilled.arrivalDate = window.arrivalDate;
+		}
+
+		const canReplaceDepartureTime = !departureTime || departureTime === previousAutoFilled.departureTime;
+		if (canReplaceDepartureTime && window.departureTime) {
+			setDepartureTime(window.departureTime);
+			nextAutoFilled.departureTime = window.departureTime;
+		}
+
+		const canReplaceArrivalTime = !arrivalTime || arrivalTime === previousAutoFilled.arrivalTime;
+		if (canReplaceArrivalTime && window.arrivalTime) {
+			setArrivalTime(window.arrivalTime);
+			nextAutoFilled.arrivalTime = window.arrivalTime;
+		}
+
+		autoFilledTravelWindowRef.current = nextAutoFilled;
+	};
+
+	const handleLinkedTravelRequisitionChange = (value: string) => {
+		setLinkedTravelRequisitionId(value);
+		applyTravelRequisitionTravelWindow(value);
+	};
+
+	useEffect(() => {
+		if (!linkedTravelRequisitionId) return;
+		applyTravelRequisitionTravelWindow(linkedTravelRequisitionId);
+	}, [linkedTravelRequisitionId, availableTravelRequisitions]);
 
 	const normalizedDepartment = session?.department?.trim().toLowerCase() ?? "";
 	const normalizedRole = session?.role?.trim().toLowerCase() ?? "";
-	const normalizedUsername = session?.username?.trim().toLowerCase() ?? "";
 	const normalizedEmployeeCode = session?.employee_code?.trim().toLowerCase() ?? "";
 	const isHodRole = normalizedRole.includes("hod");
-	const isAdminRole = normalizedRole.includes("admin");
-	const canHrApprove =
-		(normalizedDepartment.includes("hr") && isHodRole) ||
-		(normalizedDepartment.includes("admin") && (isHodRole || isAdminRole));
 	const canFinanceApprove = normalizedDepartment.includes("finance") && isHodRole;
-	const canApprovingAuthorityApprove =
-		selectedSubmission?.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername;
+	const canReportingManagerApprove =
+		Boolean(selectedSubmission) &&
+		userReportingManagerMap[selectedSubmission?.employeeCode?.trim().toLowerCase() ?? ""] === normalizedEmployeeCode;
 	const isQueryRaised = (item: SubmissionSummary | null) =>
 		Boolean(item && (item.status === "QUERY_RAISED" || item.status.endsWith("_QUERY")));
 	const hasApprovalStarted = (item: SubmissionSummary) =>
@@ -802,12 +1016,34 @@ export default function TravelExpenseStatementPage() {
 	const isSelectedSubmissionQueryRaised = isQueryRaised(selectedSubmission);
 	const canCurrentUserEditForApproval =
 		Boolean(selectedSubmission) &&
-		!isSelectedSubmissionQueryRaised &&
+			!isSelectedSubmissionQueryRaised &&
 		(
-			(canHrApprove && !selectedSubmission?.approvalFlow?.hrHod?.approved) ||
-			(canFinanceApprove && selectedSubmission?.approvalFlow?.hrHod?.approved && !selectedSubmission?.approvalFlow?.financeHod?.approved) ||
-			(canApprovingAuthorityApprove && selectedSubmission?.approvalFlow?.financeHod?.approved && !selectedSubmission?.approvalFlow?.approvingAuthority?.approved)
+			(canReportingManagerApprove && !selectedSubmission?.approvalFlow?.hrHod?.approved) ||
+			(canFinanceApprove && selectedSubmission?.approvalFlow?.hrHod?.approved && !selectedSubmission?.approvalFlow?.financeHod?.approved)
 		);
+	const approvalHistoryWithSubmitted = (() => {
+		if (!selectedSubmission) return [];
+		const history = Array.isArray(selectedSubmission.approvalHistory)
+			? selectedSubmission.approvalHistory
+			: [];
+		const hasSubmittedEntry = history.some((entry) => entry.action === "submitted");
+		if (hasSubmittedEntry) return history;
+
+		const submittedEntry: ApprovalHistoryEntry = {
+			cycle: selectedSubmission.approvalCycle || 1,
+			stage: "requestor",
+			action: "submitted",
+			actorUsername: selectedSubmission.employeeCode || "",
+			actorName: selectedSubmission.employeeName || "",
+			actedAt: selectedSubmission.createdAt || "",
+			remarks: "",
+			selectedAuthorityUsername: "",
+			selectedAuthorityName: "",
+			statusAfterAction: "SUBMITTED",
+		};
+
+		return [submittedEntry, ...history];
+	})();
 
 	const handleDelete = async (id: string) => {
 		const confirmed = window.confirm("Delete this travel expense statement?");
@@ -833,20 +1069,17 @@ export default function TravelExpenseStatementPage() {
 	};
 
 	const handleApproval = async (
-		stage: "hrHod" | "financeHod" | "approvingAuthority",
+		stage: "hrHod" | "financeHod",
 		action: "approve" | "query"
 	) => {
 		if (!selectedSubmission || !session) return;
 
-		const remarksValue =
-			stage === "hrHod" ? hrRemarks : stage === "financeHod" ? financeRemarks : authorityRemarks;
+		const remarksValue = stage === "hrHod" ? hrRemarks : financeRemarks;
 
 		if (!remarksValue.trim()) {
 			setApprovalError("Remarks are mandatory for both approval and raise query.");
 			return;
 		}
-
-		const chosenAuthority = approvedUsers.find((item) => item.username === selectedAuthorityUsername);
 
 		try {
 			setApprovalLoading(true);
@@ -860,8 +1093,6 @@ export default function TravelExpenseStatementPage() {
 					action,
 					actorUsername: session.username,
 					actorName: session.employee_name,
-					selectedAuthorityUsername,
-					selectedAuthorityName: chosenAuthority?.employee_name ?? "",
 					remarks: remarksValue,
 				}),
 			});
@@ -925,6 +1156,42 @@ export default function TravelExpenseStatementPage() {
 
 		if (!employeeName.trim() || !employeeCode.trim()) {
 			setSubmitError("Employee name and employee code are required.");
+			return;
+		}
+		if (!linkedTravelRequisitionId.trim()) {
+			setSubmitError("Travel Requisition is mandatory.");
+			return;
+		}
+		if (!departureDate.trim()) {
+			setSubmitError("Departure Date is mandatory.");
+			return;
+		}
+		if (!departureTime.trim()) {
+			setSubmitError("Departure Time is mandatory.");
+			return;
+		}
+		if (!arrivalDate.trim()) {
+			setSubmitError("Arrival Date is mandatory.");
+			return;
+		}
+		if (!arrivalTime.trim()) {
+			setSubmitError("Arrival Time is mandatory.");
+			return;
+		}
+		if (!durationDays.trim()) {
+			setSubmitError("Duration Days is mandatory.");
+			return;
+		}
+		if (!durationHours.trim()) {
+			setSubmitError("Duration Hrs is mandatory.");
+			return;
+		}
+		if (!townsTravelled.trim()) {
+			setSubmitError("Towns Travelled is mandatory.");
+			return;
+		}
+		if (!businessAttended.trim()) {
+			setSubmitError("Business Attended is mandatory.");
 			return;
 		}
 
@@ -1057,7 +1324,6 @@ export default function TravelExpenseStatementPage() {
 		const payload = {
 			employeeName: employeeName.trim(),
 			employeeCode: employeeCode.trim().toUpperCase(),
-			grade: grade.trim(),
 			departmentBranch: departmentBranch.trim(),
 			designation: designation.trim(),
 			expenseDate: expenseDate.trim(),
@@ -1065,7 +1331,7 @@ export default function TravelExpenseStatementPage() {
 			totalCostOfTour,
 			advanceTakenFromCompany: advanceTakenFromCompany.trim(),
 			expensesPaidByCompany: expensesPaidByCompanyDisplay,
-			payableToFromCompany: payableFromCompanyDisplay,
+			payableToFromCompany: settlementDisplay,
 			status:
 				selectedSubmission && isQueryRaised(selectedSubmission)
 					? "SUBMITTED"
@@ -1077,8 +1343,7 @@ export default function TravelExpenseStatementPage() {
 				arrivalTime,
 				durationDays,
 				durationHours,
-				productDeptCode,
-				deptCodeChargeable,
+				linkedTravelRequisitionId,
 				townsTravelled,
 				businessAttended,
 				amountInWords,
@@ -1153,12 +1418,9 @@ export default function TravelExpenseStatementPage() {
 							<form className="space-y-5" onSubmit={handleSubmit}>
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Travel Expense Statement</p>
-									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
 										<Field label="Name">
 											<Input value={employeeName} className={fieldSurfaceClass} disabled />
-										</Field>
-										<Field label="Grade">
-											<Input value={grade} onInput={(e) => setGrade(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Deptt/Branch">
 											<Input value={departmentBranch} className={fieldSurfaceClass} disabled />
@@ -1180,30 +1442,44 @@ export default function TravelExpenseStatementPage() {
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Travel Details</p>
-									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+										<Field label="Travel Requisition">
+											<Select
+												value={linkedTravelRequisitionId}
+												onValueChange={handleLinkedTravelRequisitionChange}
+												disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
+											>
+												<SelectTrigger className={fieldSurfaceClass}>
+													<SelectValue placeholder="Select travel requisition" />
+												</SelectTrigger>
+												<SelectContent>
+													{availableTravelRequisitions.map((item) => (
+														<SelectItem key={item.id} value={item.id}>
+															{`${getTravelRequisitionDateRangeDisplay(item)} | ${item.type || "Type N/A"} | ${item.status}`}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</Field>
 										<Field label="Departure Date">
-											<Input type="date" value={departureDate} onInput={(e) => setDepartureDate(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input type="date" value={departureDate} onInput={(e) => { setHasUserAdjustedTravelWindow(true); setDepartureDate(e.currentTarget.value); }} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Departure Time">
-											<Input type="time" value={departureTime} onInput={(e) => setDepartureTime(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input type="time" value={departureTime} onInput={(e) => { setHasUserAdjustedTravelWindow(true); setDepartureTime(e.currentTarget.value); }} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Arrival Date">
-											<Input type="date" value={arrivalDate} onInput={(e) => setArrivalDate(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input type="date" value={arrivalDate} onInput={(e) => { setHasUserAdjustedTravelWindow(true); setArrivalDate(e.currentTarget.value); }} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Arrival Time">
-											<Input type="time" value={arrivalTime} onInput={(e) => setArrivalTime(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<Input type="time" value={arrivalTime} onInput={(e) => { setHasUserAdjustedTravelWindow(true); setArrivalTime(e.currentTarget.value); }} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
+									</div>
+									<div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
 										<Field label="Duration Days">
 											<Input value={durationDays} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Duration Hrs">
 											<Input value={durationHours} className={fieldSurfaceClass} disabled />
-										</Field>
-										<Field label="Product/Deptt. Code">
-											<Input value={productDeptCode} onInput={(e) => setProductDeptCode(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-										</Field>
-										<Field label="Deptt. Code Chargeable">
-											<Input value={deptCodeChargeable} onInput={(e) => setDeptCodeChargeable(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 									</div>
 									<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1229,7 +1505,7 @@ export default function TravelExpenseStatementPage() {
 										<table className="w-full min-w-[1200px] border-collapse text-sm">
 											<thead>
 												<tr className="bg-slate-100 text-slate-700">
-													{["Departure Date", "From Place", "Dep. Time", "Arrival Date", "To Place", "Arr. Time", "Mode", "Class/Ticket No.", "Amount", "Actions"].map((label) => (
+													{["Departure Date", "From Place", "Dep. Time", "Arrival Date", "To Place", "Arr. Time", "Mode", "Class/Ticket No.", "Amount (₹)", "Actions"].map((label) => (
 														<th key={label} className="border border-slate-300 px-3 py-2 text-left font-semibold">{label}</th>
 													))}
 												</tr>
@@ -1289,7 +1565,7 @@ export default function TravelExpenseStatementPage() {
 										<table className="w-full min-w-[1500px] border-collapse text-sm">
 											<thead>
 												<tr className="bg-slate-100 text-slate-700">
-													{["Date", "Room Rent Loading", "Room Taxes", "Pvt. Stay Allowance", "Daily Allowance", "Incidental Expenses", "Conveyance", "Pvt. Conveyance", "Telephone", "Postage & Telegram", "Misc. Expense", "Total"].map((label) => (
+													{["Date", "Room Rent Loading", "Room Taxes", "Pvt. Stay Allowance", "Daily Allowance", "Incidental Expenses", "Conveyance", "Pvt. Conveyance", "Telephone", "Postage & Telegram", "Misc. Expense", "Amount (₹)"].map((label) => (
 														<th key={label} className="border border-slate-300 px-3 py-2 text-left font-semibold">{label}</th>
 													))}
 												</tr>
@@ -1338,7 +1614,7 @@ export default function TravelExpenseStatementPage() {
 										<table className="w-full min-w-[900px] border-collapse text-sm">
 											<thead>
 												<tr className="bg-slate-100 text-slate-700">
-													{["Date", "From", "To", "Mode", "Amount", "Actions"].map((label) => (
+													{["Date", "From", "To", "Mode", "Amount (₹)", "Actions"].map((label) => (
 														<th key={label} className="border border-slate-300 px-3 py-2 text-left font-semibold">{label}</th>
 													))}
 												</tr>
@@ -1375,14 +1651,12 @@ export default function TravelExpenseStatementPage() {
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Particulars</p>
 									<div className="overflow-auto rounded-xl border border-slate-300 bg-white">
-										<table className="w-full min-w-[860px] border-collapse text-sm">
+										<table className="w-full min-w-[700px] border-collapse text-sm">
 											<thead>
 												<tr className="bg-slate-100 text-slate-700">
 													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">Particulars</th>
 													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">Paid by Co/Self</th>
-													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">DR/CR</th>
-													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">Code</th>
-													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">Amount</th>
+													<th className="border border-slate-300 px-3 py-2 text-left font-semibold">Amount (₹)</th>
 												</tr>
 											</thead>
 											<tbody>
@@ -1406,8 +1680,6 @@ export default function TravelExpenseStatementPage() {
 																</SelectContent>
 															</Select>
 														</td>
-														<td className="border border-slate-300 px-2 py-1"><Input value={row.drCr} onInput={(e) => updateRow(setHeadExpenseRows, headExpenseRows, index, "drCr", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
-														<td className="border border-slate-300 px-2 py-1"><Input value={row.code} onInput={(e) => updateRow(setHeadExpenseRows, headExpenseRows, index, "code", e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} /></td>
 														<td className="border border-slate-300 px-2 py-1"><Input value={row.amount} className={fieldSurfaceClass} disabled /></td>
 													</tr>
 												)})}
@@ -1418,22 +1690,25 @@ export default function TravelExpenseStatementPage() {
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Settlement</p>
-									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+									<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
 										<Field label="Advance Taken From Company">
 											<Input value={advanceTakenFromCompany} onInput={(e) => setAdvanceTakenFromCompany(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 										<Field label="Expenses Paid By Company">
 											<Input value={expensesPaidByCompanyDisplay} className={fieldSurfaceClass} disabled />
 										</Field>
-										<Field label="Payable From Company">
-											<Input value={payableFromCompanyDisplay} className={fieldSurfaceClass} disabled />
+										<Field label="Paid By Self">
+											<Input value={paidBySelfDisplay} className={fieldSurfaceClass} disabled />
+										</Field>
+										<Field label="Settlement">
+											<Input value={settlementDisplay} className={fieldSurfaceClass} disabled />
 										</Field>
 										<Field label="Total Cost Of Tour">
 											<Input value={totalCostOfTour} className={fieldSurfaceClass} disabled />
 										</Field>
 									</div>
 									<div className="mt-4">
-										<label className="mb-2 block text-sm font-medium text-[#4d5560]">Amount In Words</label>
+										<label className="mb-2 block text-sm font-medium text-[#4d5560]">Total Tour Cost In Words (₹)</label>
 										<div className={inlineTextareaShellClass}>
 											<Textarea value={amountInWords} className={`${textareaSurfaceClass} min-h-[5.5rem]`} disabled />
 										</div>
@@ -1442,11 +1717,11 @@ export default function TravelExpenseStatementPage() {
 
 								{selectedSubmission ? (
 									<div className={sectionClass}>
-										{selectedSubmission.approvalHistory.length > 0 ? (
+										{approvalHistoryWithSubmitted.length > 0 ? (
 											<div className="mb-5 rounded-xl border border-slate-200 bg-[rgba(248,250,252,0.95)] p-4">
 												<p className="mb-3 font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">Approval History</p>
 												<div className="space-y-3">
-													{selectedSubmission.approvalHistory.map((entry, index) => (
+													{approvalHistoryWithSubmitted.map((entry, index) => (
 														<div key={`${entry.cycle}-${entry.stage}-${entry.action}-${entry.actedAt}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3">
 															<div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
 																<div>
@@ -1468,7 +1743,7 @@ export default function TravelExpenseStatementPage() {
 											<div className="rounded-xl border border-slate-200 bg-white p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div>
-														<p className="text-sm font-semibold text-slate-800">1. HR HOD / Admin HOD</p>
+														<p className="text-sm font-semibold text-slate-800">1. Reporting Manager</p>
 														<p className="text-xs text-slate-500">
 															{selectedSubmission.approvalFlow.hrHod.action
 																? `${selectedSubmission.approvalFlow.hrHod.action.toUpperCase()} by ${selectedSubmission.approvalFlow.hrHod.approvedByName || selectedSubmission.approvalFlow.hrHod.approvedByUsername} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.hrHod.approvedAt)}`
@@ -1478,9 +1753,9 @@ export default function TravelExpenseStatementPage() {
 													</div>
 													<span className={getApprovalBadgeClassName(selectedSubmission.approvalFlow.hrHod)}>{getApprovalBadgeLabel(selectedSubmission.approvalFlow.hrHod)}</span>
 												</div>
-												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.hrHod.approved && canHrApprove ? (
+												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.hrHod.approved && canReportingManagerApprove ? (
 													<div className="mt-4 space-y-3">
-														<Textarea value={hrRemarks} onInput={(e) => setHrRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
+														<Textarea value={hrRemarks} onInput={(e) => setHrRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={approvalTextareaClass} />
 														<div className="flex gap-3">
 															<Button type="button" onClick={() => void handleApproval("hrHod", "approve")} disabled={approvalLoading} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
 															<Button type="button" variant="outline" onClick={() => void handleApproval("hrHod", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
@@ -1490,69 +1765,24 @@ export default function TravelExpenseStatementPage() {
 											</div>
 
 											<div className="rounded-xl border border-slate-200 bg-white p-4">
-												<div className="flex flex-col gap-3">
-													<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-														<div>
-															<p className="text-sm font-semibold text-slate-800">2. Finance HOD</p>
-															<p className="text-xs text-slate-500">
-																{selectedSubmission.approvalFlow.financeHod.action
-																	? `${selectedSubmission.approvalFlow.financeHod.action.toUpperCase()} by ${selectedSubmission.approvalFlow.financeHod.approvedByName || selectedSubmission.approvalFlow.financeHod.approvedByUsername} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.financeHod.approvedAt)}`
-																	: "Pending approval"}
-															</p>
-															{selectedSubmission.approvalFlow.financeHod.remarks ? <p className="mt-1 text-xs text-slate-500">Remarks: {selectedSubmission.approvalFlow.financeHod.remarks}</p> : null}
-														</div>
-														<span className={`${getApprovalBadgeClassName(selectedSubmission.approvalFlow.financeHod)} w-fit`}>{getApprovalBadgeLabel(selectedSubmission.approvalFlow.financeHod)}</span>
-													</div>
-
-													<div>
-														<label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.11em] text-slate-600">Approving Authority</label>
-														<Select value={selectedAuthorityUsername} onValueChange={setSelectedAuthorityUsername} disabled={selectedSubmission.approvalFlow.financeHod.approved || !canFinanceApprove}>
-															<SelectTrigger className={fieldSurfaceClass}>
-																<SelectValue placeholder={approvedUsersLoading ? "Loading users..." : "Select approving authority"} />
-															</SelectTrigger>
-															<SelectContent>
-																{approvedUsers.map((user) => (
-																	<SelectItem key={user.id} value={user.username}>{user.employee_name} ({user.department})</SelectItem>
-																))}
-															</SelectContent>
-														</Select>
-													</div>
-													{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.financeHod.approved && canFinanceApprove && selectedSubmission.approvalFlow.hrHod.approved ? (
-														<div className="space-y-3">
-															<Textarea value={financeRemarks} onInput={(e) => setFinanceRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
-															<div className="flex gap-3">
-																<Button type="button" onClick={() => void handleApproval("financeHod", "approve")} disabled={approvalLoading || !selectedAuthorityUsername} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
-																<Button type="button" variant="outline" onClick={() => void handleApproval("financeHod", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
-															</div>
-														</div>
-													) : null}
-												</div>
-											</div>
-
-											<div className="rounded-xl border border-slate-200 bg-white p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div>
-														<p className="text-sm font-semibold text-slate-800">3. Approving Authority</p>
+														<p className="text-sm font-semibold text-slate-800">2. Finance HOD</p>
 														<p className="text-xs text-slate-500">
-															{selectedSubmission.approvalFlow.financeHod.selectedAuthorityName
-																? `Assigned to ${selectedSubmission.approvalFlow.financeHod.selectedAuthorityName}`
-																: "Finance HOD will assign the approving authority"}
-														</p>
-														<p className="text-xs text-slate-500">
-															{selectedSubmission.approvalFlow.approvingAuthority.action
-																? `${selectedSubmission.approvalFlow.approvingAuthority.action.toUpperCase()} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.approvingAuthority.approvedAt)}`
+															{selectedSubmission.approvalFlow.financeHod.action
+																? `${selectedSubmission.approvalFlow.financeHod.action.toUpperCase()} by ${selectedSubmission.approvalFlow.financeHod.approvedByName || selectedSubmission.approvalFlow.financeHod.approvedByUsername} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.financeHod.approvedAt)}`
 																: "Pending approval"}
 														</p>
-														{selectedSubmission.approvalFlow.approvingAuthority.remarks ? <p className="mt-1 text-xs text-slate-500">Remarks: {selectedSubmission.approvalFlow.approvingAuthority.remarks}</p> : null}
+														{selectedSubmission.approvalFlow.financeHod.remarks ? <p className="mt-1 text-xs text-slate-500">Remarks: {selectedSubmission.approvalFlow.financeHod.remarks}</p> : null}
 													</div>
-													<span className={getApprovalBadgeClassName(selectedSubmission.approvalFlow.approvingAuthority)}>{getApprovalBadgeLabel(selectedSubmission.approvalFlow.approvingAuthority)}</span>
+													<span className={`${getApprovalBadgeClassName(selectedSubmission.approvalFlow.financeHod)} w-fit`}>{getApprovalBadgeLabel(selectedSubmission.approvalFlow.financeHod)}</span>
 												</div>
-												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.approvingAuthority.action && canApprovingAuthorityApprove && selectedSubmission.approvalFlow.financeHod.approved ? (
-													<div className="mt-3 space-y-3">
-														<Textarea value={authorityRemarks} onInput={(e) => setAuthorityRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={`${textareaSurfaceClass} min-h-[5.5rem] !bg-white rounded-[1rem] border border-[rgba(15,23,42,0.18)] px-4 py-3`} />
+												{!isSelectedSubmissionQueryRaised && !selectedSubmission.approvalFlow.financeHod.approved && canFinanceApprove && selectedSubmission.approvalFlow.hrHod.approved ? (
+													<div className="mt-4 space-y-3">
+														<Textarea value={financeRemarks} onInput={(e) => setFinanceRemarks(e.currentTarget.value)} placeholder="Enter remarks for approval or query" className={approvalTextareaClass} />
 														<div className="flex gap-3">
-															<Button type="button" onClick={() => void handleApproval("approvingAuthority", "approve")} disabled={approvalLoading} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
-															<Button type="button" variant="outline" onClick={() => void handleApproval("approvingAuthority", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
+															<Button type="button" onClick={() => void handleApproval("financeHod", "approve")} disabled={approvalLoading} className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">Approve</Button>
+															<Button type="button" variant="outline" onClick={() => void handleApproval("financeHod", "query")} disabled={approvalLoading} className="h-9 rounded-lg border-[rgba(234,88,12,0.22)] bg-[rgba(255,247,237,0.9)] text-[#c2410c]">Raise Query</Button>
 														</div>
 													</div>
 												) : null}
@@ -1560,9 +1790,6 @@ export default function TravelExpenseStatementPage() {
 										</div>
 									</div>
 								) : null}
-
-								{approvalError ? <div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{approvalError}</div> : null}
-								{submitError ? <div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{submitError}</div> : null}
 
 								<div className="flex justify-end gap-3 border-t border-slate-300 pt-4">
 									{!selectedSubmission || isEditMode ? (
@@ -1583,25 +1810,28 @@ export default function TravelExpenseStatementPage() {
 							<Button className="rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white">New Travel Expense Statement</Button>
 						</DialogTrigger>
 					</div>
-					{summaryError ? <div className="mb-3 rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">{summaryError}</div> : null}
-					<div className="h-full overflow-auto rounded-xl border border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.96))] text-slate-800">
+				<div className="h-full overflow-auto rounded-xl border border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.96))] text-slate-800">
 						<table className="w-full min-w-[1080px] border-collapse text-sm text-slate-800">
 							<thead>
 								<tr className="bg-slate-100 text-center text-slate-700">
-									{["Date", "Voucher No.", "Employee Name", "Emp Code", "Dept/Branch", "Designation", "Total Cost Of Tour", "Status", "Submitted At", "Actions"].map((label) => (
+									{["Date", "Voucher No.", "Employee Name", "Emp Code", "Total Cost Of Tour", "Status", "Submitted At", "Actions"].map((label) => (
 										<th key={label} className="border border-slate-300 px-3 py-2.5 font-semibold">{label}</th>
 									))}
 								</tr>
 							</thead>
 							<tbody>
 								{summaryLoading ? (
-									<tr><td colSpan={10} className="px-3 py-6 text-center text-sm text-slate-500">Loading travel expense statements...</td></tr>
+									<tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">Loading travel expense statements...</td></tr>
 								) : submissionList.length === 0 ? (
-									<tr><td colSpan={10} className="px-3 py-6 text-center text-sm text-slate-500">No submissions yet. Click "New Travel Expense Statement" to add one.</td></tr>
+									<tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">No submissions yet. Click "New Travel Expense Statement" to add one.</td></tr>
 								) : (
 									submissionList.map((item) => {
 										const isActionLocked = hasApprovalStarted(item);
 										const canInitiatorManageItem = isInitiator(item);
+										const effectiveStatus =
+											item.approvalFlow?.hrHod?.approved && item.approvalFlow?.financeHod?.approved
+												? "APPROVED"
+												: item.status;
 
 										return (
 											<tr key={item.id} className="cursor-pointer odd:bg-slate-50/40 even:bg-white/90 hover:bg-sky-50/70" onClick={() => openViewMode(item)}>
@@ -1609,10 +1839,8 @@ export default function TravelExpenseStatementPage() {
 												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.voucherNo}</td>
 												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.employeeName}</td>
 												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.employeeCode}</td>
-												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.departmentBranch}</td>
-												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.designation}</td>
 												<td className="border border-slate-200 px-3 py-2.5 text-center">{item.totalCostOfTour}</td>
-												<td className="border border-slate-200 px-3 py-2.5 text-center"><span className={`${getSummaryStatusClassName(item.status)} justify-center`}>{getSummaryStatusLabel(item.status)}</span></td>
+												<td className="border border-slate-200 px-3 py-2.5 text-center"><span className={`${getSummaryStatusClassName(effectiveStatus)} justify-center`}>{getSummaryStatusLabel(effectiveStatus)}</span></td>
 												<td className="border border-slate-200 px-3 py-2.5 text-center">{formatDisplayDateTime(item.createdAt)}</td>
 												<td className="border border-slate-200 px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
 													<div className="flex items-center justify-center gap-2">

@@ -107,6 +107,17 @@ const formatDisplayDateTime = (value: string) => {
 	return `${formatDisplayDate(value)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
+const isFutureOrTodayDate = (value: string) => {
+	if (!value) return false;
+	const [year, month, day] = value.split("-").map((part) => Number(part));
+	if (!year || !month || !day) return false;
+	const selected = new Date(year, month - 1, day);
+	if (Number.isNaN(selected.getTime())) return false;
+	const now = new Date();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	return selected.getTime() >= today.getTime();
+};
+
 const getApprovalBadgeLabel = (stage: ApprovalStage) => {
 	if (stage.approved) return "APPROVED";
 	if (stage.queried || stage.action === "query") return "QUERY";
@@ -125,6 +136,10 @@ const getApprovalBadgeClassName = (stage: ApprovalStage) => {
 
 const getSummaryStatusLabel = (status: string) => {
 	if (status === "APPROVED") return "APPROVED";
+	if (status === "RESCHEDULE_REQUESTED") return "RESCHEDULE REQUESTED";
+	if (status === "CANCELLATION_REQUESTED") return "CANCELLATION REQUESTED";
+	if (status === "RESCHEDULED") return "RESCHEDULED";
+	if (status === "CANCELLED") return "CANCELLED";
 	if (status === "QUERY_RAISED" || status.endsWith("_QUERY")) return "QUERY RAISED";
 	if (status.endsWith("_APPROVED")) return "APPROVAL IN PROGRESS";
 	return status.replaceAll("_", " ");
@@ -149,9 +164,12 @@ const getApprovalStageLabel = (stage: string) => {
 };
 
 const getApprovalActionLabel = (action: string) => {
+	if (action === "submitted") return "SUBMITTED";
 	if (action === "approve") return "APPROVED";
 	if (action === "query") return "QUERY RAISED";
 	if (action === "resubmitted") return "RESUBMITTED";
+	if (action === "reschedule_requested") return "RESCHEDULE REQUESTED";
+	if (action === "cancellation_requested") return "CANCELLATION REQUESTED";
 	return action.replaceAll("_", " ").toUpperCase();
 };
 
@@ -235,6 +253,7 @@ export default function TravelRequisitionFormPage() {
 	const [approvedUsers, setApprovedUsers] = useState<ApprovedUserOption[]>([]);
 	const [approvedUsersLoading, setApprovedUsersLoading] = useState(false);
 	const [approvalLoading, setApprovalLoading] = useState(false);
+	const [flightChangeActionLoading, setFlightChangeActionLoading] = useState(false);
 	const [approvalError, setApprovalError] = useState<string | null>(null);
 	const [hrRemarks, setHrRemarks] = useState("");
 	const [financeRemarks, setFinanceRemarks] = useState("");
@@ -245,26 +264,10 @@ export default function TravelRequisitionFormPage() {
 	const [department, setDepartment] = useState(session?.department ?? "");
 	const [travelType, setTravelType] = useState("");
 	const [travelDate, setTravelDate] = useState("");
-	const [budget, setBudget] = useState("");
-	const [availed, setAvailed] = useState("");
 	const [travelTypeCategory, setTravelTypeCategory] = useState("");
 	const [travelModes, setTravelModes] = useState<string[]>([]);
 	const [hotelRequisition, setHotelRequisition] = useState("");
-	const [hotelBudget, setHotelBudget] = useState("");
 	const [visaRequired, setVisaRequired] = useState("");
-	const [visaBudget, setVisaBudget] = useState("");
-	const [domesticEntitlement, setDomesticEntitlement] = useState("");
-	const [domesticNoOfDays, setDomesticNoOfDays] = useState("");
-	const [domesticTotal, setDomesticTotal] = useState("");
-	const [domesticSpecialApproval, setDomesticSpecialApproval] = useState("");
-	const [domesticAmount, setDomesticAmount] = useState("");
-	const [foreignEntitlement, setForeignEntitlement] = useState("");
-	const [foreignNoOfDays, setForeignNoOfDays] = useState("");
-	const [foreignTotal, setForeignTotal] = useState("");
-	const [foreignSpecialApproval, setForeignSpecialApproval] = useState("");
-	const [foreignAmount, setForeignAmount] = useState("");
-	const [forexDenomination, setForexDenomination] = useState("");
-	const [totalForexRequired, setTotalForexRequired] = useState("");
 	const [reasonOfTravel, setReasonOfTravel] = useState("");
 	const [outputExpected, setOutputExpected] = useState("");
 	const [flightChanges, setFlightChanges] = useState("");
@@ -280,26 +283,10 @@ export default function TravelRequisitionFormPage() {
 		setDepartment(session?.department ?? "");
 		setTravelType("");
 		setTravelDate("");
-		setBudget("");
-		setAvailed("");
 		setTravelTypeCategory("");
 		setTravelModes([]);
 		setHotelRequisition("");
-		setHotelBudget("");
 		setVisaRequired("");
-		setVisaBudget("");
-		setDomesticEntitlement("");
-		setDomesticNoOfDays("");
-		setDomesticTotal("");
-		setDomesticSpecialApproval("");
-		setDomesticAmount("");
-		setForeignEntitlement("");
-		setForeignNoOfDays("");
-		setForeignTotal("");
-		setForeignSpecialApproval("");
-		setForeignAmount("");
-		setForexDenomination("");
-		setTotalForexRequired("");
 		setReasonOfTravel("");
 		setOutputExpected("");
 		setFlightChanges("");
@@ -327,29 +314,13 @@ export default function TravelRequisitionFormPage() {
 		setDepartment(item.department === "-" ? "" : item.department);
 		setTravelType(item.type === "-" ? "" : item.type);
 		setTravelDate(item.date === "-" ? "" : item.date);
-		setBudget(item.budget === "-" ? "" : item.budget);
-		setAvailed(item.availed === "-" ? "" : item.availed);
 		setItineraryRows(
 			item.itineraryRows?.length ? item.itineraryRows : Array.from({ length: 5 }, () => createEmptyRow())
 		);
 		setTravelTypeCategory(String(item.details?.travelTypeCategory ?? ""));
 		setTravelModes(Array.isArray(item.details?.travelModes) ? item.details.travelModes : []);
 		setHotelRequisition(String(item.details?.hotelRequisition ?? ""));
-		setHotelBudget(String(item.details?.hotelBudget ?? ""));
 		setVisaRequired(String(item.details?.visaRequired ?? ""));
-		setVisaBudget(String(item.details?.visaBudget ?? ""));
-		setDomesticEntitlement(String(item.details?.domesticEntitlement ?? ""));
-		setDomesticNoOfDays(String(item.details?.domesticNoOfDays ?? ""));
-		setDomesticTotal(String(item.details?.domesticTotal ?? ""));
-		setDomesticSpecialApproval(String(item.details?.domesticSpecialApproval ?? ""));
-		setDomesticAmount(String(item.details?.domesticAmount ?? ""));
-		setForeignEntitlement(String(item.details?.foreignEntitlement ?? ""));
-		setForeignNoOfDays(String(item.details?.foreignNoOfDays ?? ""));
-		setForeignTotal(String(item.details?.foreignTotal ?? ""));
-		setForeignSpecialApproval(String(item.details?.foreignSpecialApproval ?? ""));
-		setForeignAmount(String(item.details?.foreignAmount ?? ""));
-		setForexDenomination(String(item.details?.forexDenomination ?? ""));
-		setTotalForexRequired(String(item.details?.totalForexRequired ?? ""));
 		setReasonOfTravel(String(item.details?.reasonOfTravel ?? ""));
 		setOutputExpected(String(item.details?.outputExpected ?? ""));
 		setFlightChanges(String(item.details?.flightChanges ?? ""));
@@ -424,16 +395,33 @@ export default function TravelRequisitionFormPage() {
 				(normalizedDepartment.includes("hr") && isHodRole) ||
 				(normalizedDepartment.includes("admin") && (isHodRole || isAdminRole));
 			const isFinanceApprover = normalizedDepartment.includes("finance") && isHodRole;
-			const isAssignedApprovingAuthority = items.some(
-				(item) =>
-					item.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername
-			);
-			const canViewAllSummaries = isHrOrAdminApprover || isFinanceApprover || isAssignedApprovingAuthority;
+			const isPendingForHrOrAdmin = (item: SubmissionSummary) =>
+				isHrOrAdminApprover &&
+				!item.approvalFlow?.hrHod?.approved &&
+				(item.approvalFlow?.hrHod?.action ?? "") !== "query";
+			const isPendingForFinance = (item: SubmissionSummary) =>
+				isFinanceApprover &&
+				Boolean(item.approvalFlow?.hrHod?.approved) &&
+				!item.approvalFlow?.financeHod?.approved &&
+				(item.approvalFlow?.financeHod?.action ?? "") !== "query";
+			const isPendingForAssignedAuthority = (item: SubmissionSummary) =>
+				Boolean(item.approvalFlow?.financeHod?.approved) &&
+				!item.approvalFlow?.approvingAuthority?.approved &&
+				(item.approvalFlow?.approvingAuthority?.action ?? "") !== "query" &&
+				item.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() === normalizedUsername;
 
 			setSubmissionList(
-				canViewAllSummaries
-					? items
-					: items.filter((item) => item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode)
+				items.filter((item) => {
+					const isOwnRaisedRequest =
+						item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode;
+					const isApprovedRequest = item.status === "APPROVED";
+					if (isApprovedRequest) return isOwnRaisedRequest;
+					const isPendingForCurrentUser =
+						isPendingForHrOrAdmin(item) ||
+						isPendingForFinance(item) ||
+						isPendingForAssignedAuthority(item);
+					return isOwnRaisedRequest || isPendingForCurrentUser;
+				})
 			);
 		} catch (error) {
 			setSummaryError(
@@ -471,6 +459,24 @@ export default function TravelRequisitionFormPage() {
 		void loadApprovedUsers();
 	}, []);
 
+	useEffect(() => {
+		if (!summaryError) return;
+		window.alert(summaryError);
+		setSummaryError(null);
+	}, [summaryError]);
+
+	useEffect(() => {
+		if (!approvalError) return;
+		window.alert(approvalError);
+		setApprovalError(null);
+	}, [approvalError]);
+
+	useEffect(() => {
+		if (!submitError) return;
+		window.alert(submitError);
+		setSubmitError(null);
+	}, [submitError]);
+
 	const normalizedDepartment = session?.department?.trim().toLowerCase() ?? "";
 	const normalizedRole = session?.role?.trim().toLowerCase() ?? "";
 	const normalizedUsername = session?.username?.trim().toLowerCase() ?? "";
@@ -502,6 +508,14 @@ export default function TravelRequisitionFormPage() {
 	const isInitiator = (item: SubmissionSummary | null) =>
 		Boolean(item && item.employeeCode?.trim().toLowerCase() === normalizedEmployeeCode);
 	const isSelectedSubmissionQueryRaised = isQueryRaised(selectedSubmission);
+	const isTravelApproved =
+		selectedSubmission?.status === "APPROVED" || selectedSubmission?.status === "RESCHEDULED";
+	const isFlightChangeRequestPending =
+		selectedSubmission?.status === "RESCHEDULE_REQUESTED" ||
+		selectedSubmission?.status === "CANCELLATION_REQUESTED";
+	const isTravelDateInFutureOrToday = isFutureOrTodayDate(travelDate);
+	const canRequestFlightChange =
+		Boolean(selectedSubmission) && isInitiator(selectedSubmission) && isTravelApproved && isTravelDateInFutureOrToday;
 	const canCurrentUserEditForApproval =
 		Boolean(selectedSubmission) &&
 		!isSelectedSubmissionQueryRaised &&
@@ -510,6 +524,87 @@ export default function TravelRequisitionFormPage() {
 			(canFinanceApprove && selectedSubmission?.approvalFlow?.hrHod?.approved && !selectedSubmission?.approvalFlow?.financeHod?.approved) ||
 			(canApprovingAuthorityApprove && selectedSubmission?.approvalFlow?.financeHod?.approved && !selectedSubmission?.approvalFlow?.approvingAuthority?.approved)
 		);
+	const canEditFlightChanges =
+		(Boolean(selectedSubmission) && isInitiator(selectedSubmission) && isTravelApproved) ||
+		canCurrentUserEditForApproval;
+	const canEditTravelDate = canRequestFlightChange || canCurrentUserEditForApproval;
+	const shouldShowFlightChangesSection =
+		Boolean(selectedSubmission) &&
+		(isTravelApproved || isFlightChangeRequestPending || selectedSubmission?.status === "CANCELLED") &&
+		isTravelDateInFutureOrToday;
+
+	const handleFlightChangeRequest = async (requestType: "reschedule" | "cancel") => {
+		if (!selectedSubmission || !session) return;
+		if (!isTravelDateInFutureOrToday) {
+			setApprovalError("Flight change request is allowed only before the travel date.");
+			return;
+		}
+		if (!flightChanges.trim()) {
+			setApprovalError("Please fill Flight Changes details before requesting reschedule/cancellation.");
+			return;
+		}
+		if (requestType === "reschedule") {
+			const originalDate = String(selectedSubmission.date ?? "").trim();
+			const nextDate = String(travelDate ?? "").trim();
+			if (!nextDate) {
+				setApprovalError("Please select the updated travel date for reschedule request.");
+				return;
+			}
+			if (originalDate === nextDate) {
+				setApprovalError("Change in date is required for reschedule request.");
+				return;
+			}
+		}
+		const confirmationMessage =
+			requestType === "reschedule"
+				? "Are you sure you want to submit a reschedule request?"
+				: "Are you sure you want to submit a cancel travel request?";
+		if (!window.confirm(confirmationMessage)) {
+			return;
+		}
+
+		try {
+			setFlightChangeActionLoading(true);
+			setApprovalError(null);
+
+			const response = await fetch(
+				`${API_BASE_URL}/api/travel-requisitions/${selectedSubmission.id}/flight-change-request`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						requestType,
+						flightChanges: flightChanges.trim(),
+						travelDate: travelDate.trim(),
+						actorUsername: session.username,
+						actorEmployeeCode: session.employee_code,
+						actorName: session.employee_name,
+					}),
+				}
+			);
+			const payload = await response.json().catch(() => null);
+			if (!response.ok) {
+				throw new Error(payload?.message ?? "Unable to submit flight change request.");
+			}
+			if (payload?.item) {
+				setSubmissionList((prev) =>
+					prev.map((item) => (item.id === payload.item.id ? payload.item : item))
+				);
+				setSelectedSubmission(payload.item);
+				hydrateFormFromSubmission(payload.item);
+			}
+		} catch (error) {
+			setApprovalError(
+				error instanceof TypeError
+					? "Authentication server is not reachable. Start the backend and try again."
+					: error instanceof Error
+						? error.message
+						: "Unable to submit flight change request."
+			);
+		} finally {
+			setFlightChangeActionLoading(false);
+		}
+	};
 
 	const handleApproval = async (
 		stage: "hrHod" | "financeHod" | "approvingAuthority",
@@ -618,21 +713,7 @@ export default function TravelRequisitionFormPage() {
 			travelTypeCategory,
 			travelModes,
 			hotelRequisition,
-			hotelBudget,
 			visaRequired,
-			visaBudget,
-			domesticEntitlement,
-			domesticNoOfDays,
-			domesticTotal,
-			domesticSpecialApproval,
-			domesticAmount,
-			foreignEntitlement,
-			foreignNoOfDays,
-			foreignTotal,
-			foreignSpecialApproval,
-			foreignAmount,
-			forexDenomination,
-			totalForexRequired,
 			reasonOfTravel,
 			outputExpected,
 			flightChanges,
@@ -653,8 +734,8 @@ export default function TravelRequisitionFormPage() {
 				department,
 				travelType,
 				travelDate,
-				budget,
-				availed,
+				budget: "-",
+				availed: "-",
 				itineraryRows,
 				status: selectedSubmission?.status ?? "SUBMITTED",
 				details: collectFormDetails(),
@@ -729,7 +810,7 @@ export default function TravelRequisitionFormPage() {
 							<form key={formKey} className="space-y-5" onSubmit={handleSubmit}>
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Employee Details</p>
-									<div className="space-y-3">
+									<div className="grid grid-cols-1 gap-3 md:grid-cols-3">
 										<Field label="Employee Name">
 											<Input
 												value={employeeName}
@@ -737,29 +818,26 @@ export default function TravelRequisitionFormPage() {
 												disabled
 											/>
 										</Field>
-
-										<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-											<Field label="Employee Code">
-												<Input
-													value={employeeCode}
-													className={readOnlyFieldSurfaceClass}
-													disabled
-												/>
-											</Field>
-											<Field label="Department">
-												<Input
-													value={department}
-													className={readOnlyFieldSurfaceClass}
-													disabled
-												/>
-											</Field>
-										</div>
+										<Field label="Employee Code">
+											<Input
+												value={employeeCode}
+												className={readOnlyFieldSurfaceClass}
+												disabled
+											/>
+										</Field>
+										<Field label="Department">
+											<Input
+												value={department}
+												className={readOnlyFieldSurfaceClass}
+												disabled
+											/>
+										</Field>
 									</div>
 								</div>
 
 								<div className={sectionClass}>
 									<p className={sectionTitleClass}>Travel Summary</p>
-									<div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+									<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 										<Field label="Type">
 											<Select value={travelType} onValueChange={setTravelType} name="travelType">
 												<SelectTrigger className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
@@ -777,23 +855,7 @@ export default function TravelRequisitionFormPage() {
 												value={travelDate}
 												onInput={(e) => setTravelDate(e.currentTarget.value)}
 												className={fieldSurfaceClass}
-												disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
-											/>
-										</Field>
-										<Field label="Budget">
-											<Input
-												value={budget}
-												onInput={(e) => setBudget(e.currentTarget.value)}
-												className={fieldSurfaceClass}
-												disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
-											/>
-										</Field>
-										<Field label="Availed">
-											<Input
-												value={availed}
-												onInput={(e) => setAvailed(e.currentTarget.value)}
-												className={fieldSurfaceClass}
-												disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
+												disabled={selectedSubmission !== null && !isEditMode && !canEditTravelDate}
 											/>
 										</Field>
 									</div>
@@ -900,7 +962,7 @@ export default function TravelRequisitionFormPage() {
 									</div>
 								</div>
 
-								<div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+								<div className="grid grid-cols-1 gap-5">
 									<div className={sectionClass}>
 										<p className={sectionTitleClass}>Travel Type and Logistics</p>
 										<div className="space-y-3">
@@ -966,12 +1028,6 @@ export default function TravelRequisitionFormPage() {
 														</SelectContent>
 													</Select>
 												</Field>
-												<Field label="Hotel Budget">
-													<Input name="hotelBudget" value={hotelBudget} onInput={(e) => setHotelBudget(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-												</Field>
-											</div>
-
-											<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 												<Field label="Visa (Y/N)">
 													<Select value={visaRequired} onValueChange={setVisaRequired} name="visaRequired">
 														<SelectTrigger className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}>
@@ -983,109 +1039,6 @@ export default function TravelRequisitionFormPage() {
 														</SelectContent>
 													</Select>
 												</Field>
-												<Field label="Visa Budget">
-													<Input name="visaBudget" value={visaBudget} onInput={(e) => setVisaBudget(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-												</Field>
-											</div>
-										</div>
-									</div>
-
-									<div className="space-y-5">
-										<div className={sectionClass}>
-											<p className={sectionTitleClass}>Imprest for Domestic Travel</p>
-											<div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-												<div className="md:col-span-6">
-													<Field label="Entitlement">
-														<Input name="domesticEntitlement" value={domesticEntitlement} onInput={(e) => setDomesticEntitlement(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-3">
-													<Field label="No. of Days">
-														<Input name="domesticNoOfDays" value={domesticNoOfDays} onInput={(e) => setDomesticNoOfDays(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-3">
-													<Field label="Total">
-														<Input name="domesticTotal" value={domesticTotal} onInput={(e) => setDomesticTotal(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-											</div>
-											<div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12">
-												<div className="md:col-span-8">
-													<Field label="Special Approval (if any)">
-														<Input name="domesticSpecialApproval" value={domesticSpecialApproval} onInput={(e) => setDomesticSpecialApproval(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-4">
-													<Field label="Amount">
-														<Input name="domesticAmount" value={domesticAmount} onInput={(e) => setDomesticAmount(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-											</div>
-										</div>
-
-										<div className={sectionClass}>
-											<p className={sectionTitleClass}>Imprest for Foreign Travel</p>
-											<div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-												<div className="md:col-span-6">
-													<Field label="Entitlement">
-														<Input name="foreignEntitlement" value={foreignEntitlement} onInput={(e) => setForeignEntitlement(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-3">
-													<Field label="No. of Days">
-														<Input name="foreignNoOfDays" value={foreignNoOfDays} onInput={(e) => setForeignNoOfDays(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-3">
-													<Field label="Total">
-														<Input name="foreignTotal" value={foreignTotal} onInput={(e) => setForeignTotal(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-											</div>
-
-											<div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12">
-												<div className="md:col-span-8">
-													<Field label="Special Approval (if any)">
-														<Input name="foreignSpecialApproval" value={foreignSpecialApproval} onInput={(e) => setForeignSpecialApproval(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-												<div className="md:col-span-4">
-													<Field label="Amount">
-														<Input name="foreignAmount" value={foreignAmount} onInput={(e) => setForeignAmount(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
-											</div>
-
-											<div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12">
-												<div className="md:col-span-8">
-													<label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.11em] text-slate-600">
-														Denomination
-													</label>
-													<div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-														{["Euro", "Dollar", "GBP", "OTHS"].map((currency) => (
-															<label
-															key={currency}
-															className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-700"
-														>
-															<input
-																type="radio"
-																name="forexDenomination"
-																value={currency}
-																checked={forexDenomination === currency}
-																onChange={(e) => setForexDenomination(e.currentTarget.value)}
-																disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval}
-															/>
-																{currency}
-															</label>
-														))}
-													</div>
-												</div>
-												<div className="md:col-span-4">
-													<Field label="Total Forex Required">
-														<Input name="totalForexRequired" value={totalForexRequired} onInput={(e) => setTotalForexRequired(e.currentTarget.value)} className={fieldSurfaceClass} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
-													</Field>
-												</div>
 											</div>
 										</div>
 									</div>
@@ -1101,11 +1054,34 @@ export default function TravelRequisitionFormPage() {
 											<AutoGrowTextarea name="outputExpected" value={outputExpected} onInput={(e) => setOutputExpected(e.currentTarget.value)} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
 										</Field>
 									</div>
-									<div className="mt-4">
+									{shouldShowFlightChangesSection ? (
+										<div className="mt-4">
 										<Field label="Flight Changes if Required, Please Mention">
-											<AutoGrowTextarea name="flightChanges" value={flightChanges} onInput={(e) => setFlightChanges(e.currentTarget.value)} disabled={selectedSubmission !== null && !isEditMode && !canCurrentUserEditForApproval} />
+											<AutoGrowTextarea name="flightChanges" value={flightChanges} onInput={(e) => setFlightChanges(e.currentTarget.value)} disabled={selectedSubmission !== null && !isEditMode && !canEditFlightChanges} />
 										</Field>
-									</div>
+											{canRequestFlightChange ? (
+												<div className="mt-3 flex flex-wrap gap-3">
+													<Button
+														type="button"
+														onClick={() => void handleFlightChangeRequest("reschedule")}
+														disabled={flightChangeActionLoading || !flightChanges.trim()}
+														className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white"
+													>
+														Reschedule
+													</Button>
+													<Button
+														type="button"
+														variant="outline"
+														onClick={() => void handleFlightChangeRequest("cancel")}
+														disabled={flightChangeActionLoading || !flightChanges.trim()}
+														className="h-9 rounded-lg border-[rgba(220,38,38,0.2)] bg-[rgba(254,242,242,0.9)] text-[#b91c1c]"
+													>
+														Cancel travel request
+													</Button>
+												</div>
+											) : null}
+										</div>
+									) : null}
 								</div>
 
 								{selectedSubmission && (
@@ -1158,7 +1134,23 @@ export default function TravelRequisitionFormPage() {
 											<div className="rounded-xl border border-slate-200 bg-white p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div>
-														<p className="text-sm font-semibold text-slate-800">1. HR HOD / Admin HOD</p>
+														<p className="text-sm font-semibold text-slate-800">1. Requestor</p>
+														<p className="text-xs text-slate-500">
+															{selectedSubmission.employeeName} on {formatDisplayDateTime(selectedSubmission.createdAt)}
+														</p>
+													</div>
+													<div className="flex items-center gap-3">
+														<span className={getApprovalBadgeClassName({ approved: true, queried: false, action: "approve", approvedByUsername: "", approvedByName: "", approvedAt: "", remarks: "" })}>
+															SUBMITTED
+														</span>
+													</div>
+												</div>
+											</div>
+
+											<div className="rounded-xl border border-slate-200 bg-white p-4">
+												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+													<div>
+														<p className="text-sm font-semibold text-slate-800">2. HR HOD / Admin HOD</p>
 														<p className="text-xs text-slate-500">
 															{selectedSubmission.approvalFlow.hrHod.action
 																? `${selectedSubmission.approvalFlow.hrHod.action.toUpperCase()} by ${selectedSubmission.approvalFlow.hrHod.approvedByName || selectedSubmission.approvalFlow.hrHod.approvedByUsername} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.hrHod.approvedAt)}`
@@ -1217,7 +1209,7 @@ export default function TravelRequisitionFormPage() {
 												<div className="flex flex-col gap-3">
 													<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 														<div>
-															<p className="text-sm font-semibold text-slate-800">2. Finance HOD</p>
+															<p className="text-sm font-semibold text-slate-800">3. Finance HOD</p>
 															<p className="text-xs text-slate-500">
 																{selectedSubmission.approvalFlow.financeHod.action
 																	? `${selectedSubmission.approvalFlow.financeHod.action.toUpperCase()} by ${selectedSubmission.approvalFlow.financeHod.approvedByName || selectedSubmission.approvalFlow.financeHod.approvedByUsername} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.financeHod.approvedAt)}`
@@ -1308,12 +1300,17 @@ export default function TravelRequisitionFormPage() {
 											<div className="rounded-xl border border-slate-200 bg-white p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div>
-														<p className="text-sm font-semibold text-slate-800">3. Approving Authority</p>
+														<p className="text-sm font-semibold text-slate-800">4. Approving Authority</p>
 														<p className="text-xs text-slate-500">
 															{selectedSubmission.approvalFlow.financeHod.selectedAuthorityName
 																? `Assigned to ${selectedSubmission.approvalFlow.financeHod.selectedAuthorityName}`
 																: "Finance HOD will assign the approving authority"}
 														</p>
+														{isFlightChangeRequestPending ? (
+															<p className="text-xs font-medium text-slate-600">
+																Updated Travel Date: {formatDisplayDate(selectedSubmission.date)}
+															</p>
+														) : null}
 														<p className="text-xs text-slate-500">
 															{selectedSubmission.approvalFlow.approvingAuthority.action
 																? `${selectedSubmission.approvalFlow.approvingAuthority.action.toUpperCase()} on ${formatDisplayDateTime(selectedSubmission.approvalFlow.approvingAuthority.approvedAt)}`
@@ -1333,6 +1330,7 @@ export default function TravelRequisitionFormPage() {
 												</div>
 												{!isSelectedSubmissionQueryRaised &&
 												!selectedSubmission.approvalFlow.approvingAuthority.action &&
+												!isFlightChangeRequestPending &&
 												canApprovingAuthorityApprove &&
 												selectedSubmission.approvalFlow.financeHod.approved ? (
 													<div className="mt-3 space-y-3">
@@ -1369,20 +1367,31 @@ export default function TravelRequisitionFormPage() {
 														</div>
 													</div>
 												) : null}
+												{isFlightChangeRequestPending && canApprovingAuthorityApprove ? (
+													<div className="mt-3 space-y-3">
+														<Textarea
+															value={authorityRemarks}
+															onInput={(e) => setAuthorityRemarks(e.currentTarget.value)}
+															placeholder="Enter remarks for cancellation/reschedule approval"
+															className={approvalRemarksTextareaClass}
+														/>
+														<div className="flex gap-3">
+															<Button
+																type="button"
+																onClick={() => {
+																	setIsEditMode(true);
+																	void handleApproval("approvingAuthority", "approve");
+																}}
+																disabled={approvalLoading}
+																className="h-9 rounded-lg bg-[linear-gradient(90deg,#1d4ed8,#0891b2)] text-white"
+															>
+																Approve
+															</Button>
+														</div>
+													</div>
+												) : null}
 											</div>
 										</div>
-									</div>
-								)}
-
-								{approvalError && (
-									<div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">
-										{approvalError}
-									</div>
-								)}
-
-								{submitError && (
-									<div className="rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">
-										{submitError}
 									</div>
 								)}
 
@@ -1413,21 +1422,14 @@ export default function TravelRequisitionFormPage() {
 							</Button>
 						</DialogTrigger>
 					</div>
-				{summaryError && (
-					<div className="mb-3 rounded-xl border border-[rgba(220,38,38,0.2)] bg-[rgba(248,113,113,0.14)] px-4 py-3 text-sm text-[#b91c1c]">
-						{summaryError}
-					</div>
-				)}
 				<div className="h-full overflow-auto rounded-xl border border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.96))] text-slate-800">
-					<table className="w-full min-w-[860px] border-collapse text-sm text-slate-800">
+					<table className="w-full min-w-[760px] border-collapse text-sm text-slate-800">
 						<thead>
 							<tr className="bg-slate-100 text-center text-slate-700">
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Travel Date</th>
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Employee Name</th>
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Emp Code</th>
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Type</th>
-								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Budget</th>
-								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Availed</th>
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Status</th>
 								<th className="border border-slate-300 px-3 py-2.5 font-semibold">Submitted At</th>
 								<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold">Actions</th>
@@ -1436,13 +1438,13 @@ export default function TravelRequisitionFormPage() {
 						<tbody>
 							{summaryLoading ? (
 								<tr>
-									<td colSpan={9} className="px-3 py-6 text-center text-sm text-slate-500">
+									<td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
 										Loading travel requisitions...
 									</td>
 								</tr>
 							) : submissionList.length === 0 ? (
 								<tr>
-									<td colSpan={9} className="px-3 py-6 text-center text-sm text-slate-500">
+									<td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
 										No submissions yet. Click "New Travel Requisition" to add one.
 									</td>
 								</tr>
@@ -1461,8 +1463,6 @@ export default function TravelRequisitionFormPage() {
 										<td className="border border-slate-200 px-3 py-2.5 text-center">{item.employeeName}</td>
 										<td className="border border-slate-200 px-3 py-2.5 text-center">{item.employeeCode}</td>
 										<td className="border border-slate-200 px-3 py-2.5 text-center">{item.type}</td>
-										<td className="border border-slate-200 px-3 py-2.5 text-center">{item.budget}</td>
-										<td className="border border-slate-200 px-3 py-2.5 text-center">{item.availed}</td>
 										<td className="border border-slate-200 px-3 py-2.5 text-center">
 											<span className={`${getSummaryStatusClassName(item.status)} justify-center`}>
 												{getSummaryStatusLabel(item.status)}

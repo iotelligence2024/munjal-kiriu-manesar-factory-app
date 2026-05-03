@@ -33,9 +33,27 @@ type UserMasterItem = {
 	role: string;
 	email: string;
 	mobileNumber: string;
+	reportingManagerName: string;
+	reportingManagerEmployeeCode: string;
 	username: string;
 	approved: boolean;
 };
+
+const normalizeUserMasterItem = (raw: Record<string, unknown>): UserMasterItem => ({
+	id: String(raw.id ?? ""),
+	employeeName: String(raw.employeeName ?? raw.employee_name ?? ""),
+	employeeCode: String(raw.employeeCode ?? raw.employee_code ?? ""),
+	department: String(raw.department ?? ""),
+	role: String(raw.role ?? ""),
+	email: String(raw.email ?? ""),
+	mobileNumber: String(raw.mobileNumber ?? raw.mobile_number ?? ""),
+	reportingManagerName: String(raw.reportingManagerName ?? raw.reporting_manager_name ?? ""),
+	reportingManagerEmployeeCode: String(
+		raw.reportingManagerEmployeeCode ?? raw.reporting_manager_employee_code ?? ""
+	),
+	username: String(raw.username ?? ""),
+	approved: Boolean(raw.approved),
+});
 
 type UserFormState = {
 	id: string;
@@ -45,6 +63,8 @@ type UserFormState = {
 	role: string;
 	email: string;
 	mobileNumber: string;
+	reportingManagerName: string;
+	reportingManagerEmployeeCode: string;
 	username: string;
 	password: string;
 	approved: "YES" | "NO";
@@ -82,6 +102,8 @@ const emptyUserForm = (): UserFormState => ({
 	role: "",
 	email: "",
 	mobileNumber: "",
+	reportingManagerName: "",
+	reportingManagerEmployeeCode: "",
 	username: "",
 	password: "",
 	approved: "NO",
@@ -127,7 +149,11 @@ export default function UserMasterPage() {
 
 			setDepartments(Array.isArray(departmentPayload?.items) ? departmentPayload.items : []);
 			setRoles(Array.isArray(rolePayload?.items) ? rolePayload.items : []);
-			setUsers(Array.isArray(userPayload?.items) ? userPayload.items : []);
+			setUsers(
+				Array.isArray(userPayload?.items)
+					? userPayload.items.map((item: unknown) => normalizeUserMasterItem((item ?? {}) as Record<string, unknown>))
+					: []
+			);
 		} catch (loadError) {
 			setError(
 				loadError instanceof TypeError
@@ -154,6 +180,8 @@ export default function UserMasterPage() {
 			role: user.role ?? "",
 			email: user.email ?? "",
 			mobileNumber: user.mobileNumber ?? "",
+			reportingManagerName: user.reportingManagerName ?? "",
+			reportingManagerEmployeeCode: user.reportingManagerEmployeeCode ?? "",
 			username: user.username ?? "",
 			password: "",
 			approved: user.approved ? "YES" : "NO",
@@ -165,6 +193,23 @@ export default function UserMasterPage() {
 		setUserForm((current) => ({
 			...current,
 			[field]: value,
+		}));
+	};
+
+	const handleReportingManagerChange = (value: string) => {
+		if (value === "__none__") {
+			setUserForm((current) => ({
+				...current,
+				reportingManagerName: "",
+				reportingManagerEmployeeCode: "",
+			}));
+			return;
+		}
+		const selectedManager = users.find((item) => item.id === value);
+		setUserForm((current) => ({
+			...current,
+			reportingManagerName: selectedManager?.employeeName ?? "",
+			reportingManagerEmployeeCode: selectedManager?.employeeCode ?? "",
 		}));
 	};
 
@@ -182,6 +227,10 @@ export default function UserMasterPage() {
 					role: userForm.role,
 					email: userForm.email,
 					mobileNumber: userForm.mobileNumber,
+					reportingManagerName: userForm.reportingManagerName,
+					reportingManagerEmployeeCode: userForm.reportingManagerEmployeeCode,
+					reporting_manager_name: userForm.reportingManagerName,
+					reporting_manager_employee_code: userForm.reportingManagerEmployeeCode,
 					username: userForm.username,
 					password: userForm.password,
 					approved: userForm.approved === "YES",
@@ -250,6 +299,7 @@ export default function UserMasterPage() {
 								<th className={tableHeadClassName}>Role</th>
 								<th className={tableHeadClassName}>Email</th>
 								<th className={tableHeadClassName}>Mobile Number</th>
+								<th className={tableHeadClassName}>Reporting Manager Name</th>
 								<th className={tableHeadClassName}>Username</th>
 								<th className={tableHeadClassName}>Approved</th>
 								<th className={actionHeadClassName}>Action</th>
@@ -258,11 +308,11 @@ export default function UserMasterPage() {
 						<tbody>
 							{loading ? (
 								<tr>
-									<td colSpan={9} className="px-3 py-6 text-center text-slate-500">Loading user master...</td>
+									<td colSpan={10} className="px-3 py-6 text-center text-slate-500">Loading user master...</td>
 								</tr>
 							) : users.length === 0 ? (
 								<tr>
-									<td colSpan={9} className="px-3 py-6 text-center text-slate-500">No user records available.</td>
+									<td colSpan={10} className="px-3 py-6 text-center text-slate-500">No user records available.</td>
 								</tr>
 							) : (
 								users.map((user) => (
@@ -273,6 +323,7 @@ export default function UserMasterPage() {
 										<td className={tableCellClassName}>{user.role}</td>
 										<td className={tableCellClassName}>{user.email}</td>
 										<td className={tableCellClassName}>{user.mobileNumber}</td>
+										<td className={tableCellClassName}>{user.reportingManagerName || "-"}</td>
 									<td className={tableCellClassName}>{user.username}</td>
 									<td className={tableCellClassName}>{user.approved ? "YES" : "NO"}</td>
 									<td className={actionCellClassName}>
@@ -367,6 +418,35 @@ export default function UserMasterPage() {
 							<Label className={fieldLabelClassName}>Mobile Number</Label>
 							<div className={signupInputShellClassName}>
 								<Input value={userForm.mobileNumber} onChange={(e) => handleUserFormChange("mobileNumber", e.currentTarget.value)} className={signupInputClassName} style={flatInputStyle} />
+							</div>
+						</div>
+						<div className="space-y-2">
+							<Label className={fieldLabelClassName}>Reporting Manager</Label>
+							<div className={signupInputShellClassName}>
+								<Select
+									value={users.find((item) => item.employeeCode === userForm.reportingManagerEmployeeCode)?.id ?? "__none__"}
+									onValueChange={handleReportingManagerChange}
+								>
+									<SelectTrigger className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+										<SelectValue placeholder="Select reporting manager" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="__none__">None</SelectItem>
+										{users
+											.filter((item) => item.id !== userForm.id)
+											.map((item) => (
+												<SelectItem key={item.id} value={item.id}>
+													{`${item.employeeName} (${item.employeeCode})`}
+												</SelectItem>
+											))}
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
+						<div className="space-y-2">
+							<Label className={fieldLabelClassName}>Reporting Manager Employee Code</Label>
+							<div className={signupInputShellClassName}>
+								<Input value={userForm.reportingManagerEmployeeCode} disabled className={signupInputClassName} style={flatInputStyle} />
 							</div>
 						</div>
 						<div className="space-y-2">

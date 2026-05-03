@@ -59,6 +59,16 @@ const userSchema = new mongoose.Schema(
 			required: true,
 			trim: true,
 		},
+		reportingManagerName: {
+			type: String,
+			trim: true,
+			default: "",
+		},
+		reportingManagerEmployeeCode: {
+			type: String,
+			trim: true,
+			default: "",
+		},
 		username: {
 			type: String,
 			required: true,
@@ -563,6 +573,8 @@ function sanitizeUser(userDocument) {
 		role: userDocument.role,
 		email: userDocument.email,
 		mobile_number: userDocument.mobileNumber,
+		reporting_manager_name: userDocument.reportingManagerName ?? "",
+		reporting_manager_employee_code: userDocument.reportingManagerEmployeeCode ?? "",
 		username: userDocument.username,
 		approved: userDocument.approved,
 	};
@@ -728,6 +740,36 @@ const getIsoDateString = (value = new Date()) => {
 
 const getDateToken = (isoDate) => String(isoDate ?? "").replaceAll("-", "");
 
+const TRAVEL_REQUISITION_STATUS = {
+	SUBMITTED: "SUBMITTED",
+	HR_HOD_APPROVED: "HR_HOD_APPROVED",
+	FINANCE_HOD_APPROVED: "FINANCE_HOD_APPROVED",
+	APPROVED: "APPROVED",
+	QUERY_RAISED: "QUERY_RAISED",
+	RESCHEDULE_REQUESTED: "RESCHEDULE_REQUESTED",
+	CANCELLATION_REQUESTED: "CANCELLATION_REQUESTED",
+	RESCHEDULED: "RESCHEDULED",
+	CANCELLED: "CANCELLED",
+};
+
+const createTravelRequisitionSubmittedHistoryEntry = ({
+	employeeName,
+	employeeCode,
+	cycle = 1,
+	actedAt = new Date(),
+}) => ({
+	cycle,
+	stage: "requestor",
+	action: "submitted",
+	actorUsername: String(employeeCode ?? "").trim().toLowerCase(),
+	actorName: String(employeeName ?? "").trim(),
+	actedAt,
+	remarks: "Travel requisition submitted.",
+	selectedAuthorityUsername: "",
+	selectedAuthorityName: "",
+	statusAfterAction: TRAVEL_REQUISITION_STATUS.SUBMITTED,
+});
+
 async function generateTravelExpenseVoucherNo(expenseDate) {
 	const safeExpenseDate = getIsoDateString(new Date(String(expenseDate ?? "")));
 	const token = getDateToken(safeExpenseDate);
@@ -859,7 +901,17 @@ app.get("/api/health", async (_req, res) => {
 
 app.post("/api/signup", async (req, res) => {
 	try {
-		const { employeeName, employeeCode, department, role, email, mobileNumber, username, password } = req.body ?? {};
+		const {
+			employeeName,
+			employeeCode,
+			department,
+			role,
+			email,
+			mobileNumber,
+			reportingManagerEmployeeCode,
+			username,
+			password,
+		} = req.body ?? {};
 
 		if (!employeeName || !employeeCode || !department || !role || !email || !mobileNumber || !username || !password) {
 			return res.status(400).json({
@@ -872,6 +924,7 @@ app.post("/api/signup", async (req, res) => {
 
 		const normalizedUsername = String(username).trim().toLowerCase();
 		const normalizedEmployeeCode = String(employeeCode).trim().toUpperCase();
+		const normalizedReportingManagerEmployeeCode = String(reportingManagerEmployeeCode ?? "").trim().toUpperCase();
 
 		const existingUser = await User.findOne({
 			$or: [
@@ -888,6 +941,17 @@ app.post("/api/signup", async (req, res) => {
 		}
 
 		const passwordHash = await bcrypt.hash(String(password), 10);
+		let resolvedReportingManagerName = "";
+		if (normalizedReportingManagerEmployeeCode) {
+			const manager = await User.findOne({ employeeCode: normalizedReportingManagerEmployeeCode }).lean();
+			if (!manager) {
+				return res.status(400).json({
+					ok: false,
+					message: "Selected reporting manager not found.",
+				});
+			}
+			resolvedReportingManagerName = String(manager.employeeName ?? "").trim();
+		}
 
 		const createdUser = await User.create({
 			employeeName: String(employeeName).trim(),
@@ -896,6 +960,8 @@ app.post("/api/signup", async (req, res) => {
 			role: String(role).trim(),
 			email: String(email).trim().toLowerCase(),
 			mobileNumber: String(mobileNumber).trim(),
+			reportingManagerName: resolvedReportingManagerName,
+			reportingManagerEmployeeCode: normalizedReportingManagerEmployeeCode,
 			username: normalizedUsername,
 			passwordHash,
 			approved: false,
@@ -1019,14 +1085,20 @@ app.post("/api/travel-requisitions", async (req, res) => {
 			travelDate: String(travelDate ?? "").trim(),
 			budget: String(budget ?? "").trim(),
 			availed: String(availed ?? "").trim(),
-			status: "SUBMITTED",
+			status: TRAVEL_REQUISITION_STATUS.SUBMITTED,
 			approvalCycle: 1,
 			approvalFlow: {
 				hrHod: {},
 				financeHod: {},
 				approvingAuthority: {},
 			},
-			approvalHistory: [],
+			approvalHistory: [
+				createTravelRequisitionSubmittedHistoryEntry({
+					employeeName: String(employeeName).trim(),
+					employeeCode: String(employeeCode).trim().toUpperCase(),
+					cycle: 1,
+				}),
+			],
 			itineraryRows: Array.isArray(itineraryRows) ? itineraryRows : [],
 			details: details && typeof details === "object" ? details : {},
 		});
@@ -1874,6 +1946,8 @@ app.get("/api/user-master", async (_req, res) => {
 				employeeName: user.employeeName,
 				employeeCode: user.employeeCode,
 				mobileNumber: user.mobileNumber,
+				reportingManagerName: user.reportingManagerName ?? "",
+				reportingManagerEmployeeCode: user.reportingManagerEmployeeCode ?? "",
 				createdAt: user.createdAt instanceof Date ? user.createdAt.toISOString() : "",
 				updatedAt: user.updatedAt instanceof Date ? user.updatedAt.toISOString() : "",
 			})),
@@ -1889,7 +1963,21 @@ app.get("/api/user-master", async (_req, res) => {
 app.patch("/api/user-master/:id", async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { department, role, email, mobileNumber, username, password, approved } = req.body ?? {};
+		const {
+			department,
+			role,
+			email,
+			mobileNumber,
+			reportingManagerName,
+			reportingManagerEmployeeCode,
+			username,
+			password,
+			approved,
+		} = req.body ?? {};
+		const legacyReportingManagerEmployeeCode =
+			typeof req.body?.reporting_manager_employee_code === "string"
+				? req.body.reporting_manager_employee_code
+				: "";
 
 		await connectToDatabase();
 
@@ -1928,6 +2016,31 @@ app.patch("/api/user-master/:id", async (req, res) => {
 		user.role = String(role).trim();
 		user.email = normalizedEmail;
 		user.mobileNumber = String(mobileNumber).trim();
+		const normalizedReportingManagerEmployeeCode = String(
+			reportingManagerEmployeeCode ?? legacyReportingManagerEmployeeCode ?? ""
+		)
+			.trim()
+			.toUpperCase();
+		if (normalizedReportingManagerEmployeeCode) {
+			if (normalizedReportingManagerEmployeeCode === String(user.employeeCode ?? "").trim().toUpperCase()) {
+				return res.status(400).json({
+					ok: false,
+					message: "User cannot be assigned as their own reporting manager.",
+				});
+			}
+			const manager = await User.findOne({ employeeCode: normalizedReportingManagerEmployeeCode }).lean();
+			if (!manager) {
+				return res.status(400).json({
+					ok: false,
+					message: "Selected reporting manager not found.",
+				});
+			}
+			user.reportingManagerName = String(manager.employeeName ?? "").trim();
+			user.reportingManagerEmployeeCode = normalizedReportingManagerEmployeeCode;
+		} else {
+			user.reportingManagerName = "";
+			user.reportingManagerEmployeeCode = "";
+		}
 		user.username = normalizedUsername;
 		user.approved = Boolean(approved);
 
@@ -1945,6 +2058,8 @@ app.patch("/api/user-master/:id", async (req, res) => {
 				employeeName: updatedUser.employeeName,
 				employeeCode: updatedUser.employeeCode,
 				mobileNumber: updatedUser.mobileNumber,
+				reportingManagerName: updatedUser.reportingManagerName ?? "",
+				reportingManagerEmployeeCode: updatedUser.reportingManagerEmployeeCode ?? "",
 				createdAt: updatedUser.createdAt instanceof Date ? updatedUser.createdAt.toISOString() : "",
 				updatedAt: updatedUser.updatedAt instanceof Date ? updatedUser.updatedAt.toISOString() : "",
 			},
@@ -2018,7 +2133,7 @@ app.put("/api/travel-requisitions/:id", async (req, res) => {
 
 		const previousStatus = String(document.status ?? "").trim();
 		const isQueryResubmission =
-			previousStatus === "QUERY_RAISED" || previousStatus.endsWith("_QUERY");
+			previousStatus === TRAVEL_REQUISITION_STATUS.QUERY_RAISED || previousStatus.endsWith("_QUERY");
 
 		document.employeeName = String(employeeName).trim();
 		document.employeeCode = String(employeeCode).trim().toUpperCase();
@@ -2030,8 +2145,8 @@ app.put("/api/travel-requisitions/:id", async (req, res) => {
 		document.itineraryRows = Array.isArray(itineraryRows) ? itineraryRows : [];
 		document.details = details && typeof details === "object" ? details : {};
 		document.status = isQueryResubmission
-			? "SUBMITTED"
-			: String(status ?? "SUBMITTED").trim() || "SUBMITTED";
+			? TRAVEL_REQUISITION_STATUS.SUBMITTED
+			: String(status ?? TRAVEL_REQUISITION_STATUS.SUBMITTED).trim() || TRAVEL_REQUISITION_STATUS.SUBMITTED;
 
 		if (isQueryResubmission) {
 			document.approvalHistory = [
@@ -2046,7 +2161,7 @@ app.put("/api/travel-requisitions/:id", async (req, res) => {
 					remarks: "Requisition resubmitted after query raised.",
 					selectedAuthorityUsername: "",
 					selectedAuthorityName: "",
-					statusAfterAction: "SUBMITTED",
+					statusAfterAction: TRAVEL_REQUISITION_STATUS.SUBMITTED,
 				},
 			];
 			document.approvalCycle = Number(document.approvalCycle ?? 1) + 1;
@@ -2113,8 +2228,6 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 			action,
 			actorUsername,
 			actorName,
-			selectedAuthorityUsername,
-			selectedAuthorityName,
 			remarks,
 		} = req.body ?? {};
 
@@ -2169,7 +2282,10 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 				approvedAt,
 				remarks: remarksValue,
 			};
-			document.status = currentAction === "approve" ? "HR_HOD_APPROVED" : "QUERY_RAISED";
+			document.status =
+				currentAction === "approve"
+					? TRAVEL_REQUISITION_STATUS.HR_HOD_APPROVED
+					: TRAVEL_REQUISITION_STATUS.QUERY_RAISED;
 		} else if (currentStage === "financeHod") {
 			if (!document.approvalFlow?.hrHod?.approved) {
 				return res.status(409).json({ ok: false, message: "HR HOD / Admin HOD approval is required first." });
@@ -2195,7 +2311,10 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 						: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
 				remarks: remarksValue,
 			};
-			document.status = currentAction === "approve" ? "FINANCE_HOD_APPROVED" : "QUERY_RAISED";
+			document.status =
+				currentAction === "approve"
+					? TRAVEL_REQUISITION_STATUS.FINANCE_HOD_APPROVED
+					: TRAVEL_REQUISITION_STATUS.QUERY_RAISED;
 		} else if (currentStage === "approvingAuthority") {
 			const assignedUsername =
 				document.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() ?? "";
@@ -2210,6 +2329,10 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 				return res.status(403).json({ ok: false, message: "Only the selected approving authority can approve this requisition." });
 			}
 
+			const isRescheduleApproval =
+				document.status === TRAVEL_REQUISITION_STATUS.RESCHEDULE_REQUESTED && currentAction === "approve";
+			const isCancellationApproval =
+				document.status === TRAVEL_REQUISITION_STATUS.CANCELLATION_REQUESTED && currentAction === "approve";
 			document.approvalFlow.approvingAuthority = {
 				approved: currentAction === "approve",
 				queried: currentAction === "query",
@@ -2219,7 +2342,13 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 				approvedAt,
 				remarks: remarksValue,
 			};
-			document.status = currentAction === "approve" ? "APPROVED" : "QUERY_RAISED";
+			document.status = currentAction === "approve"
+				? isRescheduleApproval
+					? TRAVEL_REQUISITION_STATUS.RESCHEDULED
+					: isCancellationApproval
+						? TRAVEL_REQUISITION_STATUS.CANCELLED
+						: TRAVEL_REQUISITION_STATUS.APPROVED
+				: TRAVEL_REQUISITION_STATUS.QUERY_RAISED;
 		} else {
 			return res.status(400).json({
 				ok: false,
@@ -2260,6 +2389,138 @@ app.patch("/api/travel-requisitions/:id/approve", async (req, res) => {
 		return res.status(500).json({
 			ok: false,
 			message: error instanceof Error ? error.message : "Unable to record approval.",
+		});
+	}
+});
+
+app.patch("/api/travel-requisitions/:id/flight-change-request", async (req, res) => {
+	try {
+		const { id } = req.params;
+		const { requestType, flightChanges, travelDate, actorUsername, actorName, actorEmployeeCode } = req.body ?? {};
+
+		const normalizedRequestType = String(requestType ?? "").trim().toLowerCase();
+		if (!["reschedule", "cancel"].includes(normalizedRequestType)) {
+			return res.status(400).json({
+				ok: false,
+				message: "Request type must be either reschedule or cancel.",
+			});
+		}
+		const flightChangesValue = String(flightChanges ?? "").trim();
+		if (!flightChangesValue) {
+			return res.status(400).json({
+				ok: false,
+				message: "Flight change details are required.",
+			});
+		}
+		if (!actorUsername) {
+			return res.status(400).json({
+				ok: false,
+				message: "Actor username is required.",
+			});
+		}
+
+		await connectToDatabase();
+		const document = await TravelRequisition.findById(id);
+		if (!document) {
+			return res.status(404).json({
+				ok: false,
+				message: "Travel requisition not found.",
+			});
+		}
+
+		const username = String(actorUsername).trim().toLowerCase();
+		const normalizedActorEmployeeCode = String(actorEmployeeCode ?? "").trim().toLowerCase();
+		const isInitiator =
+			normalizedActorEmployeeCode !== "" &&
+			String(document.employeeCode ?? "").trim().toLowerCase() === normalizedActorEmployeeCode;
+		if (!isInitiator) {
+			return res.status(403).json({
+				ok: false,
+				message: "Only the requestor can raise cancellation/reschedule request.",
+			});
+		}
+
+		const eligibleStatuses = [
+			TRAVEL_REQUISITION_STATUS.APPROVED,
+			TRAVEL_REQUISITION_STATUS.RESCHEDULED,
+		];
+		if (!eligibleStatuses.includes(String(document.status ?? "").trim().toUpperCase())) {
+			return res.status(409).json({
+				ok: false,
+				message: "Cancellation/reschedule can be requested only after requisition approval.",
+			});
+		}
+		if (!String(document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "").trim()) {
+			return res.status(409).json({
+				ok: false,
+				message: "Approving authority is not assigned for this requisition.",
+			});
+		}
+
+		const nextStatus =
+			normalizedRequestType === "cancel"
+				? TRAVEL_REQUISITION_STATUS.CANCELLATION_REQUESTED
+				: TRAVEL_REQUISITION_STATUS.RESCHEDULE_REQUESTED;
+		const actionName =
+			normalizedRequestType === "cancel" ? "cancellation_requested" : "reschedule_requested";
+		const actedAt = new Date();
+
+		document.details = document.details && typeof document.details === "object" ? document.details : {};
+		document.details.flightChanges = flightChangesValue;
+		if (normalizedRequestType === "reschedule") {
+			const nextTravelDate = String(travelDate ?? "").trim();
+			const previousTravelDate = String(document.travelDate ?? "").trim();
+			if (!nextTravelDate) {
+				return res.status(400).json({
+					ok: false,
+					message: "Updated travel date is required for reschedule request.",
+				});
+			}
+			if (nextTravelDate === previousTravelDate) {
+				return res.status(400).json({
+					ok: false,
+					message: "Change in date is required for reschedule request.",
+				});
+			}
+			document.travelDate = nextTravelDate;
+		}
+		document.status = nextStatus;
+		document.approvalFlow.approvingAuthority = {
+			approved: false,
+			queried: false,
+			action: "",
+			approvedByUsername: "",
+			approvedByName: "",
+			approvedAt: null,
+			remarks: "",
+		};
+		document.approvalHistory = [
+			...(Array.isArray(document.approvalHistory) ? document.approvalHistory : []),
+			{
+				cycle: Number(document.approvalCycle ?? 1),
+				stage: "requestor",
+				action: actionName,
+				actorUsername: username,
+				actorName: String(actorName ?? "").trim() || String(document.employeeName ?? "").trim(),
+				actedAt,
+				remarks: flightChangesValue,
+				selectedAuthorityUsername: document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
+				selectedAuthorityName: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				statusAfterAction: nextStatus,
+			},
+		];
+
+		await document.save();
+
+		return res.status(200).json({
+			ok: true,
+			message: "Flight change request submitted for approval.",
+			item: sanitizeTravelRequisition(document),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to raise flight change request.",
 		});
 	}
 });
@@ -2422,7 +2683,7 @@ app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
 		const remarksValue = String(remarks ?? "").trim();
 		const approvedAt = new Date();
 
-		if (!["hrHod", "financeHod", "approvingAuthority"].includes(currentStage)) {
+		if (!["hrHod", "financeHod"].includes(currentStage)) {
 			return res.status(400).json({
 				ok: false,
 				message: "Unsupported approval stage.",
@@ -2443,9 +2704,32 @@ app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
 			});
 		}
 
+		const actorUser = await User.findOne({ username }).lean();
+		if (!actorUser) {
+			return res.status(400).json({
+				ok: false,
+				message: "Approver user not found.",
+			});
+		}
+
 		if (currentStage === "hrHod") {
 			if (document.approvalFlow?.hrHod?.approved && currentAction === "approve") {
-				return res.status(409).json({ ok: false, message: "HR HOD / Admin HOD already approved this statement." });
+				return res.status(409).json({ ok: false, message: "Reporting Manager already approved this statement." });
+			}
+			const requestor = await User.findOne({
+				employeeCode: String(document.employeeCode ?? "").trim().toUpperCase(),
+			}).lean();
+			const requestorReportingManagerEmployeeCode = String(
+				requestor?.reportingManagerEmployeeCode ?? ""
+			)
+				.trim()
+				.toUpperCase();
+			const approverEmployeeCode = String(actorUser.employeeCode ?? "").trim().toUpperCase();
+			if (!requestorReportingManagerEmployeeCode || requestorReportingManagerEmployeeCode !== approverEmployeeCode) {
+				return res.status(403).json({
+					ok: false,
+					message: "Only the reporting manager of the requestor can approve at this stage.",
+				});
 			}
 
 			document.approvalFlow.hrHod = {
@@ -2457,10 +2741,18 @@ app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
 				approvedAt,
 				remarks: remarksValue,
 			};
-			document.status = currentAction === "approve" ? "HR_HOD_APPROVED" : "HR_HOD_QUERY";
+			document.status = currentAction === "approve" ? "REPORTING_MANAGER_APPROVED" : "REPORTING_MANAGER_QUERY";
 		} else if (currentStage === "financeHod") {
 			if (!document.approvalFlow?.hrHod?.approved) {
-				return res.status(409).json({ ok: false, message: "HR HOD / Admin HOD approval is required first." });
+				return res.status(409).json({ ok: false, message: "Reporting Manager approval is required first." });
+			}
+			const actorDepartment = String(actorUser.department ?? "").trim().toLowerCase();
+			const actorRole = String(actorUser.role ?? "").trim().toLowerCase();
+			if (!actorDepartment.includes("finance") || !actorRole.includes("hod")) {
+				return res.status(403).json({
+					ok: false,
+					message: "Only Finance HOD can approve at this stage.",
+				});
 			}
 
 			document.approvalFlow.financeHod = {
@@ -2470,39 +2762,11 @@ app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
 				approvedByUsername: username,
 				approvedByName: name,
 				approvedAt,
-				selectedAuthorityUsername:
-					currentAction === "approve"
-						? String(selectedAuthorityUsername ?? "").trim().toLowerCase()
-						: document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
-				selectedAuthorityName:
-					currentAction === "approve"
-						? String(selectedAuthorityName ?? "").trim()
-						: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				selectedAuthorityUsername: "",
+				selectedAuthorityName: "",
 				remarks: remarksValue,
 			};
-			document.status = currentAction === "approve" ? "FINANCE_HOD_APPROVED" : "FINANCE_HOD_QUERY";
-		} else if (currentStage === "approvingAuthority") {
-			const assignedAuthority =
-				document.approvalFlow?.financeHod?.selectedAuthorityUsername?.trim().toLowerCase() ?? "";
-
-			if (!document.approvalFlow?.financeHod?.approved) {
-				return res.status(409).json({ ok: false, message: "Finance HOD approval is required first." });
-			}
-
-			if (assignedAuthority && assignedAuthority !== username) {
-				return res.status(403).json({ ok: false, message: "Only the assigned approving authority can act on this statement." });
-			}
-
-			document.approvalFlow.approvingAuthority = {
-				approved: currentAction === "approve",
-				queried: currentAction === "query",
-				action: currentAction,
-				approvedByUsername: username,
-				approvedByName: name,
-				approvedAt,
-				remarks: remarksValue,
-			};
-			document.status = currentAction === "approve" ? "APPROVED" : "APPROVING_AUTHORITY_QUERY";
+			document.status = currentAction === "approve" ? "APPROVED" : "FINANCE_HOD_QUERY";
 		}
 
 		document.approvalHistory = [
@@ -2515,14 +2779,8 @@ app.patch("/api/travel-expense-statements/:id/approve", async (req, res) => {
 				actorName: name,
 				actedAt: approvedAt,
 				remarks: remarksValue,
-				selectedAuthorityUsername:
-					currentStage === "financeHod" && currentAction === "approve"
-						? String(selectedAuthorityUsername ?? "").trim().toLowerCase()
-						: document.approvalFlow?.financeHod?.selectedAuthorityUsername ?? "",
-				selectedAuthorityName:
-					currentStage === "financeHod" && currentAction === "approve"
-						? String(selectedAuthorityName ?? "").trim()
-						: document.approvalFlow?.financeHod?.selectedAuthorityName ?? "",
+				selectedAuthorityUsername: "",
+				selectedAuthorityName: "",
 				statusAfterAction: document.status,
 			},
 		];
