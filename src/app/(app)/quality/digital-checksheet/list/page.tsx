@@ -242,6 +242,62 @@ const splitResponsibilities = (value: unknown) =>
 		.map((item) => normalizeRoleText(item))
 		.filter(Boolean);
 
+const normalizeDepartmentText = (value: unknown) =>
+	String(value ?? "")
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+
+const splitDepartments = (value: unknown) =>
+	String(value ?? "")
+		.split(/[\/,|]/)
+		.map((item) => normalizeDepartmentText(item))
+		.filter(Boolean);
+
+const parseRangeToken = (token: string) => {
+	const match = token.match(/^\s*(-?\d+(?:\.\d+)?)\s*[-~]\s*(-?\d+(?:\.\d+)?)\s*$/);
+	if (!match) return null;
+	const min = Number(match[1]);
+	const max = Number(match[2]);
+	if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+	return { min: Math.min(min, max), max: Math.max(min, max) };
+};
+
+const shouldHighlightSubmittedCell = ({
+	isSubmitted,
+	fieldKey,
+	displayValue,
+	originalRowValue,
+}: {
+	isSubmitted: boolean;
+	fieldKey: string;
+	displayValue: string;
+	originalRowValue: unknown;
+}) => {
+	if (!isSubmitted) return false;
+
+	const normalizedValue = String(displayValue ?? "").trim().toLowerCase();
+	if (normalizedValue === "ng") return true;
+
+	if (fieldKey !== "judgment") return false;
+
+	const numericValue = Number(String(displayValue ?? "").trim());
+	if (!Number.isFinite(numericValue)) return false;
+
+	const tokens = (Array.isArray(originalRowValue) ? originalRowValue : [originalRowValue])
+		.flatMap((raw) => String(raw ?? "").split(/[;,|]/))
+		.map((token) => token.trim())
+		.filter(Boolean);
+	const ranges = tokens
+		.map(parseRangeToken)
+		.filter((value): value is { min: number; max: number } => value !== null);
+
+	if (ranges.length === 0) return false;
+	return !ranges.some((range) => numericValue >= range.min && numericValue <= range.max);
+};
+
 export default function DigitalChecksheetListPage() {
 	const { session } = useSession();
 	const [searchParams] = useSearchParams();
@@ -339,6 +395,7 @@ export default function DigitalChecksheetListPage() {
 	);
 	const selectedResolvedDataItem = selectedDataItem;
 	const normalizedSessionRole = normalizeRoleText(session?.role ?? "");
+	const normalizedSessionDepartment = normalizeDepartmentText(session?.department ?? "");
 	const isQueryRaised = useMemo(() => {
 		if (!selectedResolvedDataItem) return false;
 
@@ -353,6 +410,10 @@ export default function DigitalChecksheetListPage() {
 	const isReadOnlyChecksheet = useMemo(
 		() => Boolean((selectedResolvedDataItem?.status === "completed" || selectedResolvedDataItem?.status === "approved") && !isQueryRaised),
 		[selectedResolvedDataItem, isQueryRaised]
+	);
+	const isSubmittedChecksheet = useMemo(
+		() => Boolean(selectedResolvedDataItem?.status === "completed" || selectedResolvedDataItem?.status === "approved"),
+		[selectedResolvedDataItem]
 	);
 
 	const approvalStages = useMemo(() => {
@@ -478,10 +539,20 @@ export default function DigitalChecksheetListPage() {
 			selectedRows[rowIndex]?.responsibility ??
 			selectedChecksheet?.["check-points"]?.[rowIndex]?.responsibility ??
 			"";
+		const rowDepartment =
+			selectedRows[rowIndex]?.department ??
+			selectedChecksheet?.["check-points"]?.[rowIndex]?.department ??
+			"";
 		const acceptedResponsibilities = splitResponsibilities(rowResponsibility);
-		const canEditRow =
+		const acceptedDepartments = splitDepartments(rowDepartment);
+		const roleAllowed =
 			acceptedResponsibilities.length === 0 ||
 			acceptedResponsibilities.includes(normalizedSessionRole);
+		const departmentAllowed =
+			acceptedDepartments.length === 0 ||
+			acceptedDepartments.includes(normalizedSessionDepartment);
+		const canEditRow =
+			roleAllowed && departmentAllowed;
 		if (!canEditRow) return;
 
 		setSelectedRows((current) =>
@@ -503,13 +574,21 @@ export default function DigitalChecksheetListPage() {
 					row.responsibility ??
 					selectedChecksheet?.["check-points"]?.[index]?.responsibility ??
 					"";
+				const rowDepartment =
+					row.department ??
+					selectedChecksheet?.["check-points"]?.[index]?.department ??
+					"";
 				const acceptedResponsibilities = splitResponsibilities(rowResponsibility);
-				return (
+				const acceptedDepartments = splitDepartments(rowDepartment);
+				const roleAllowed =
 					acceptedResponsibilities.length === 0 ||
-					acceptedResponsibilities.includes(normalizedSessionRole)
-				);
+					acceptedResponsibilities.includes(normalizedSessionRole);
+				const departmentAllowed =
+					acceptedDepartments.length === 0 ||
+					acceptedDepartments.includes(normalizedSessionDepartment);
+				return roleAllowed && departmentAllowed;
 			}),
-		[selectedRows, selectedChecksheet, normalizedSessionRole]
+		[selectedRows, selectedChecksheet, normalizedSessionRole, normalizedSessionDepartment]
 	);
 
 	const canEditAnyCheckpoint = useMemo(
@@ -541,6 +620,10 @@ export default function DigitalChecksheetListPage() {
 					month,
 					status,
 					approval: "not_started",
+					actorDepartment: session?.department ?? "",
+					actorRole: session?.role ?? "",
+					actorUsername: session?.username ?? "",
+					actorName: session?.employee_name ?? "",
 					authorization: selectedChecksheet.authorization ?? {},
 					"check-points-mapping": selectedChecksheet["check-points-mapping"] ?? {},
 					"check-points": selectedRows,
@@ -831,26 +914,38 @@ export default function DigitalChecksheetListPage() {
 													const displayValue = Array.isArray(rawValue)
 														? rawValue.join(", ")
 														: String(rawValue ?? "");
+													const originalRowValue = selectedChecksheet?.["check-points"]?.[rowIndex]?.[key];
+													const isHighlightedCell = shouldHighlightSubmittedCell({
+														isSubmitted: isSubmittedChecksheet,
+														fieldKey: key,
+														displayValue,
+														originalRowValue,
+													});
 
 													const canEditRow = rowEditPermissions[rowIndex] ?? false;
 												if (!config.input || isReadOnlyChecksheet || !canEditRow) {
 														return (
-															<td key={key} className={detailCellClassName}>
+															<td
+																key={key}
+																className={`${detailCellClassName}${isHighlightedCell ? " bg-[rgba(254,226,226,0.82)] text-[#991b1b] font-semibold" : ""}`}
+															>
 																{displayValue}
 															</td>
 														);
 													}
 
 													const isLongText = key === "remarks" || key === "inspection-items" || key === "standard";
-													const originalRowValue = selectedChecksheet?.["check-points"]?.[rowIndex]?.[key];
 													const isOptionField =
-														Array.isArray(originalRowValue) && originalRowValue.length > 0;
+														Array.isArray(originalRowValue) && originalRowValue.length > 1;
 													const optionValues = isOptionField
 														? (originalRowValue as unknown[]).map((value) => String(value))
 														: [];
 
 													return (
-														<td key={key} className={detailCellClassName}>
+														<td
+															key={key}
+															className={`${detailCellClassName}${isHighlightedCell ? " bg-[rgba(254,226,226,0.82)] text-[#991b1b] font-semibold" : ""}`}
+														>
 															{isOptionField ? (
 																<Select
 																	value={displayValue || "__empty__"}
@@ -1081,9 +1176,19 @@ export default function DigitalChecksheetListPage() {
 														const displayValue = Array.isArray(rawValue)
 															? rawValue.join(", ")
 															: String(rawValue ?? "");
+														const originalRowValue = selectedChecksheet?.["check-points"]?.[rowIndex]?.[key];
+														const isHighlightedCell = shouldHighlightSubmittedCell({
+															isSubmitted: isSubmittedChecksheet,
+															fieldKey: key,
+															displayValue,
+															originalRowValue,
+														});
 
 														return (
-															<td key={key} className={detailCellClassName}>
+															<td
+																key={key}
+																className={`${detailCellClassName}${isHighlightedCell ? " bg-[rgba(254,226,226,0.82)] text-[#991b1b] font-semibold" : ""}`}
+															>
 																{displayValue}
 															</td>
 														);

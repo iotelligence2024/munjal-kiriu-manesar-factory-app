@@ -80,9 +80,10 @@ const defaultMappingFields: MappingFieldState[] = [
 	{ id: "standard", key: "standard", name: "Standard", enable: true, sequence: 2, input: false, mandatory: false },
 	{ id: "method", key: "method", name: "Method", enable: true, sequence: 3, input: false, mandatory: false },
 	{ id: "frequency", key: "frequency", name: "Frequency", enable: true, sequence: 4, input: false, mandatory: false },
-	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 5, input: false, mandatory: false },
-	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 6, input: true, mandatory: false },
-	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 7, input: true, mandatory: false },
+	{ id: "department", key: "department", name: "Department", enable: true, sequence: 5, input: false, mandatory: false },
+	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 6, input: false, mandatory: false },
+	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 7, input: true, mandatory: false },
+	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 8, input: true, mandatory: false },
 ];
 
 const emptyForm = (): FormState => ({
@@ -180,19 +181,41 @@ const mappingToRows = (
 		return defaultMappingFields;
 	}
 
-	return normalizeMappingFields(
-		Object.entries(mapping).map(([key, value]) =>
-			createMappingField(value.sequence, {
-				id: key,
-				key,
-				name: value.name ?? "",
-				enable: Boolean(value.enable),
-				input: Boolean(value.input),
-				mandatory: Boolean(value.mandatory),
-				sequence: Number(value.sequence ?? 0),
-			})
-		)
+	const rows = Object.entries(mapping).map(([key, value]) =>
+		createMappingField(value.sequence, {
+			id: key,
+			key,
+			name: value.name ?? "",
+			enable: Boolean(value.enable),
+			input: Boolean(value.input),
+			mandatory: Boolean(value.mandatory),
+			sequence: Number(value.sequence ?? 0),
+		})
 	);
+
+	const hasDepartment = rows.some((row) => row.key.trim().toLowerCase() === "department");
+	if (!hasDepartment) {
+		const responsibilityRow = rows.find(
+			(row) => row.key.trim().toLowerCase() === "responsibility"
+		);
+		const sequence =
+			responsibilityRow && Number.isFinite(responsibilityRow.sequence)
+				? responsibilityRow.sequence - 0.5
+				: rows.length + 1;
+
+		rows.push(
+			createMappingField(sequence, {
+				id: "department",
+				key: "department",
+				name: "Department",
+				enable: true,
+				input: false,
+				mandatory: false,
+			})
+		);
+	}
+
+	return normalizeMappingFields(rows);
 };
 
 const authorizationToRows = (
@@ -851,7 +874,7 @@ export default function ChecksheetMasterPage() {
 						<tbody>
 							{checkPoints.map((row, index) => (
 								<tr key={row.id} className="odd:bg-slate-50/40 even:bg-white/90">
-									{enabledMappingFields.map((field) => (
+										{enabledMappingFields.map((field) => (
 										<td key={`${row.id}-${field.id}`} className={tableCellClassName}>
 											{field.key === "inspection-items" || field.key === "standard" ? (
 												<AutoGrowTextarea
@@ -869,6 +892,21 @@ export default function ChecksheetMasterPage() {
 													<SelectContent>
 														<SelectItem value="__empty__">Select role</SelectItem>
 														{roles.map((item) => (
+															<SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>
+														))}
+													</SelectContent>
+												</Select>
+											) : field.key === "department" ? (
+												<Select
+													value={(typeof row[field.key] === "string" ? String(row[field.key]) : "") || "__empty__"}
+													onValueChange={(value) => handleCheckPointChange(row.id, field.key, value === "__empty__" ? "" : value)}
+												>
+													<SelectTrigger className="h-9 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+														<SelectValue placeholder="Select department" />
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="__empty__">Select department</SelectItem>
+														{departments.map((item) => (
 															<SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>
 														))}
 													</SelectContent>

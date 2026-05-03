@@ -941,6 +941,34 @@ function sanitizeChecksheetData(document) {
 		};
 		return accumulator;
 	}, {});
+	const approvalHistory = Array.isArray(document.approvalHistory)
+		? document.approvalHistory.map((entry) => ({
+			stage: entry?.stage ?? "",
+			action: entry?.action ?? "",
+			actorUsername: entry?.actorUsername ?? "",
+			actorName: entry?.actorName ?? "",
+			actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
+			remarks: entry?.remarks ?? "",
+			statusAfterAction: entry?.statusAfterAction ?? "",
+		}))
+		: [];
+	const hasSubmittedEntry = approvalHistory.some(
+		(entry) => String(entry?.action ?? "").trim().toLowerCase() === "submitted"
+	);
+	const firstKnownStage = String(approvalHistory[0]?.stage ?? "").trim();
+	const fallbackSubmittedEntry = {
+		stage: firstKnownStage || "submitted",
+		action: "submitted",
+		actorUsername: "",
+		actorName: document["checksheet-name"] ?? "",
+		actedAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
+		remarks: "Checksheet submitted.",
+		statusAfterAction: "completed",
+	};
+	const normalizedApprovalHistory =
+		approvalHistory.length > 0 && !hasSubmittedEntry
+			? [fallbackSubmittedEntry, ...approvalHistory]
+			: approvalHistory;
 
 	return {
 		id: document._id.toString(),
@@ -953,17 +981,7 @@ function sanitizeChecksheetData(document) {
 		status: document.status ?? "pending",
 		approval: document.approval ?? "not_started",
 		approvalFlow,
-		approvalHistory: Array.isArray(document.approvalHistory)
-			? document.approvalHistory.map((entry) => ({
-				stage: entry?.stage ?? "",
-				action: entry?.action ?? "",
-				actorUsername: entry?.actorUsername ?? "",
-				actorName: entry?.actorName ?? "",
-				actedAt: entry?.actedAt instanceof Date ? entry.actedAt.toISOString() : "",
-				remarks: entry?.remarks ?? "",
-				statusAfterAction: entry?.statusAfterAction ?? "",
-			}))
-			: [],
+		approvalHistory: normalizedApprovalHistory,
 		"check-points-mapping": document["check-points-mapping"] ?? {},
 		"check-points": Array.isArray(document["check-points"]) ? document["check-points"] : [],
 		createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
@@ -1785,6 +1803,10 @@ app.post("/api/checksheet-data", async (req, res) => {
 			month,
 			status,
 			approval,
+			actorDepartment,
+			actorRole,
+			actorUsername,
+			actorName,
 			authorization,
 			"check-points-mapping": checkPointsMapping,
 			"check-points": checkPoints,
@@ -1828,20 +1850,44 @@ app.post("/api/checksheet-data", async (req, res) => {
 		const approvalHistory = Array.isArray(existingItem?.approvalHistory)
 			? existingItem.approvalHistory
 			: [];
+		const normalizedActorDepartment = String(actorDepartment ?? "").trim();
+		const normalizedActorRole = String(actorRole ?? "").trim();
+		const normalizedActorUsername = String(actorUsername ?? "").trim().toLowerCase();
+		const normalizedActorName = String(actorName ?? "").trim();
+		const submitterStage =
+			normalizedActorDepartment && normalizedActorRole
+				? createApprovalStageKey(normalizedActorDepartment, normalizedActorRole)
+				: "submitted";
+		const hasSubmittedEntry = approvalHistory.some(
+			(entry) => String(entry?.action ?? "").trim().toLowerCase() === "submitted"
+		);
+		const submittedEntry = {
+			stage: submitterStage,
+			action: "submitted",
+			actorUsername: normalizedActorUsername,
+			actorName: normalizedActorName || String(checksheetName ?? "").trim(),
+			actedAt: new Date(),
+			remarks: "Checksheet submitted.",
+			statusAfterAction: "completed",
+		};
 		const nextApprovalHistory =
-			hadQueryRaised && normalizedStatus === "completed"
-				? [
-					...approvalHistory,
-					{
-						stage: "requestor",
-						action: "resubmitted",
-						actorUsername: "",
-						actorName: String(checksheetName ?? "").trim(),
-						actedAt: new Date(),
-						remarks: "Checksheet resubmitted after query raised.",
-						statusAfterAction: "completed",
-					},
-				]
+			normalizedStatus === "completed"
+				? hadQueryRaised
+					? [
+						...(hasSubmittedEntry ? approvalHistory : [submittedEntry, ...approvalHistory]),
+						{
+							stage: submitterStage,
+							action: "resubmitted",
+							actorUsername: normalizedActorUsername,
+							actorName: normalizedActorName || String(checksheetName ?? "").trim(),
+							actedAt: new Date(),
+							remarks: "Checksheet resubmitted after query raised.",
+							statusAfterAction: "completed",
+						},
+					]
+					: hasSubmittedEntry
+						? approvalHistory
+						: [submittedEntry, ...approvalHistory]
 				: approvalHistory;
 
 		const item = await ChecksheetData.findOneAndUpdate(
