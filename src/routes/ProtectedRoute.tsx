@@ -2,6 +2,8 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useSession } from "../app/context/SessionContext";
 import type { ReactNode } from "react";
+import { useEffect } from "react";
+import { isPathAuthorizedForSession, UNAUTHORIZED_ALERT_KEY } from "../utils/access-control";
 
 const POST_LOGIN_REDIRECT_KEY = "post_login_redirect";
 
@@ -12,6 +14,17 @@ export default function ProtectedRoute({
 }) {
     const { session } = useSession();
     const location = useLocation();
+    const isUnauthorizedForPath = Boolean(session) && !isPathAuthorizedForSession(session, location.pathname);
+
+    useEffect(() => {
+        if (!isUnauthorizedForPath || typeof window === "undefined") {
+            return;
+        }
+        if (!sessionStorage.getItem(UNAUTHORIZED_ALERT_KEY)) {
+            window.alert("Unauthorized acccess");
+            sessionStorage.setItem(UNAUTHORIZED_ALERT_KEY, "1");
+        }
+    }, [isUnauthorizedForPath]);
 
     if (!session) {
         const redirectPath = `${location.pathname}${location.search}${location.hash}`;
@@ -30,6 +43,19 @@ export default function ProtectedRoute({
                         search: location.search,
                         hash: location.hash,
                     },
+                }}
+            />
+        );
+    }
+
+    if (isUnauthorizedForPath) {
+        return (
+            <Navigate
+                to="/"
+                replace
+                state={{
+                    unauthorized: true,
+                    unauthorizedMessage: "Unauthorized acccess",
                 }}
             />
         );

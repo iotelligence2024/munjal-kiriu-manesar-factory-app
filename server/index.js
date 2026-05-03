@@ -133,6 +133,39 @@ const RoleMaster =
 	mongoose.models.RoleMaster ||
 	mongoose.model("RoleMaster", roleMasterSchema);
 
+const activityMappingModuleSchema = new mongoose.Schema(
+	{
+		travel_requisition: { type: Boolean, default: false },
+		travel_expense_statement: { type: Boolean, default: false },
+		digital_checksheet: { type: Boolean, default: false },
+		department_master: { type: Boolean, default: false },
+		checksheet_master: { type: Boolean, default: false },
+		role_master: { type: Boolean, default: false },
+		user_master: { type: Boolean, default: false },
+		activity_mapping: { type: Boolean, default: false },
+	},
+	{ _id: false }
+);
+
+const activityMappingSchema = new mongoose.Schema(
+	{
+		department: { type: String, required: true, trim: true },
+		role: { type: String, required: true, trim: true },
+		modules: { type: activityMappingModuleSchema, default: {} },
+	},
+	{
+		collection: "activity-mapping",
+		timestamps: true,
+		versionKey: false,
+	}
+);
+
+activityMappingSchema.index({ department: 1, role: 1 }, { unique: true });
+
+const ActivityMapping =
+	mongoose.models.ActivityMapping ||
+	mongoose.model("ActivityMapping", activityMappingSchema);
+
 const checksheetMappingValueSchema = new mongoose.Schema(
 	{
 		enable: {
@@ -580,6 +613,62 @@ function sanitizeUser(userDocument) {
 	};
 }
 
+const normalizeModuleAccess = (rawModules = {}) => ({
+	travel_requisition: Boolean(rawModules?.travel_requisition),
+	travel_expense_statement: Boolean(rawModules?.travel_expense_statement),
+	digital_checksheet: Boolean(rawModules?.digital_checksheet),
+	department_master: Boolean(rawModules?.department_master),
+	checksheet_master: Boolean(rawModules?.checksheet_master),
+	role_master: Boolean(rawModules?.role_master),
+	user_master: Boolean(rawModules?.user_master),
+	activity_mapping: Boolean(rawModules?.activity_mapping),
+});
+
+const sanitizeActivityMapping = (document) => ({
+	id: document._id.toString(),
+	department: String(document.department ?? "").trim(),
+	role: String(document.role ?? "").trim(),
+	modules: normalizeModuleAccess(document.modules ?? {}),
+});
+
+const isItAdminRole = (department, role) => {
+	const normalizedDepartment = String(department ?? "").trim().toLowerCase();
+	const normalizedRole = String(role ?? "").trim().toLowerCase();
+	return normalizedRole === "it admin" || (normalizedDepartment === "it" && normalizedRole === "admin");
+};
+
+const getAllowedModulesForUser = async ({ department, role }) => {
+	if (isItAdminRole(department, role)) {
+		return {
+			travel_requisition: true,
+			travel_expense_statement: true,
+			digital_checksheet: true,
+			department_master: true,
+			checksheet_master: true,
+			role_master: true,
+			user_master: true,
+			activity_mapping: true,
+		};
+	}
+
+	const mapping = await ActivityMapping.findOne({
+		department: {
+			$regex: `^${String(department ?? "")
+				.trim()
+				.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+			$options: "i",
+		},
+		role: {
+			$regex: `^${String(role ?? "")
+				.trim()
+				.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+			$options: "i",
+		},
+	}).lean();
+
+	return normalizeModuleAccess(mapping?.modules ?? {});
+};
+
 function sanitizeTravelRequisition(document) {
 	return {
 		id: document._id.toString(),
@@ -1022,9 +1111,15 @@ app.post("/api/login", async (req, res) => {
 			});
 		}
 
+		const allowedModules = await getAllowedModulesForUser({
+			department: user.department,
+			role: user.role,
+		});
+
 		return res.status(200).json({
 			ok: true,
 			...sanitizeUser(user),
+			allowed_modules: allowedModules,
 		});
 	} catch (error) {
 		return res.status(500).json({
@@ -1297,6 +1392,16 @@ app.delete("/api/department-master/:id", async (req, res) => {
 			});
 		}
 
+		const deletedDepartmentName = String(deletedDepartment.name ?? "").trim();
+		if (deletedDepartmentName) {
+			await ActivityMapping.deleteMany({
+				department: {
+					$regex: `^${deletedDepartmentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+					$options: "i",
+				},
+			});
+		}
+
 		return res.status(200).json({
 			ok: true,
 			message: "Department deleted successfully.",
@@ -1335,17 +1440,27 @@ app.patch("/api/department-master/:id", async (req, res) => {
 			});
 		}
 
-		const updatedDepartment = await DepartmentMaster.findByIdAndUpdate(
-			req.params.id,
-			{ name: normalizedName },
-			{ returnDocument: "after" }
-		).lean();
-
-		if (!updatedDepartment) {
+		const existingDepartmentRecord = await DepartmentMaster.findById(req.params.id).lean();
+		if (!existingDepartmentRecord) {
 			return res.status(404).json({
 				ok: false,
 				message: "Department not found.",
 			});
+		}
+		const previousDepartmentName = String(existingDepartmentRecord.name ?? "").trim();
+
+		const updatedDepartment = await DepartmentMaster.findByIdAndUpdate(req.params.id, { name: normalizedName }, { returnDocument: "after" }).lean();
+
+		if (previousDepartmentName && previousDepartmentName.toLowerCase() !== normalizedName.toLowerCase()) {
+			await ActivityMapping.updateMany(
+				{
+					department: {
+						$regex: `^${previousDepartmentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+						$options: "i",
+					},
+				},
+				{ $set: { department: normalizedName } }
+			);
 		}
 
 		return res.status(200).json({
@@ -1375,6 +1490,60 @@ app.get("/api/role-master", async (_req, res) => {
 		return res.status(500).json({
 			ok: false,
 			message: error instanceof Error ? error.message : "Unable to load roles.",
+		});
+	}
+});
+
+app.get("/api/activity-mapping", async (_req, res) => {
+	try {
+		await connectToDatabase();
+
+		const items = await ActivityMapping.find().sort({ department: 1, role: 1 }).lean();
+
+		return res.status(200).json({
+			ok: true,
+			items: items.map(sanitizeActivityMapping),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to load activity mapping.",
+		});
+	}
+});
+
+app.put("/api/activity-mapping", async (req, res) => {
+	try {
+		const incomingItems = Array.isArray(req.body?.items) ? req.body.items : [];
+		await connectToDatabase();
+
+		await ActivityMapping.deleteMany({});
+
+		if (incomingItems.length > 0) {
+			const normalizedItems = incomingItems
+				.map((item) => ({
+					department: String(item?.department ?? "").trim(),
+					role: String(item?.role ?? "").trim(),
+					modules: normalizeModuleAccess(item?.modules ?? {}),
+				}))
+				.filter((item) => item.department && item.role);
+
+			if (normalizedItems.length > 0) {
+				await ActivityMapping.insertMany(normalizedItems, { ordered: false });
+			}
+		}
+
+		const latestItems = await ActivityMapping.find().sort({ department: 1, role: 1 }).lean();
+
+		return res.status(200).json({
+			ok: true,
+			message: "Activity mapping saved successfully.",
+			items: latestItems.map(sanitizeActivityMapping),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: error instanceof Error ? error.message : "Unable to save activity mapping.",
 		});
 	}
 });
@@ -1869,6 +2038,16 @@ app.delete("/api/role-master/:id", async (req, res) => {
 			});
 		}
 
+		const deletedRoleName = String(deletedRole.name ?? "").trim();
+		if (deletedRoleName) {
+			await ActivityMapping.deleteMany({
+				role: {
+					$regex: `^${deletedRoleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+					$options: "i",
+				},
+			});
+		}
+
 		return res.status(200).json({
 			ok: true,
 			message: "Role deleted successfully.",
@@ -1907,17 +2086,27 @@ app.patch("/api/role-master/:id", async (req, res) => {
 			});
 		}
 
-		const updatedRole = await RoleMaster.findByIdAndUpdate(
-			req.params.id,
-			{ name: normalizedName },
-			{ returnDocument: "after" }
-		).lean();
-
-		if (!updatedRole) {
+		const existingRoleRecord = await RoleMaster.findById(req.params.id).lean();
+		if (!existingRoleRecord) {
 			return res.status(404).json({
 				ok: false,
 				message: "Role not found.",
 			});
+		}
+		const previousRoleName = String(existingRoleRecord.name ?? "").trim();
+
+		const updatedRole = await RoleMaster.findByIdAndUpdate(req.params.id, { name: normalizedName }, { returnDocument: "after" }).lean();
+
+		if (previousRoleName && previousRoleName.toLowerCase() !== normalizedName.toLowerCase()) {
+			await ActivityMapping.updateMany(
+				{
+					role: {
+						$regex: `^${previousRoleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+						$options: "i",
+					},
+				},
+				{ $set: { role: normalizedName } }
+			);
 		}
 
 		return res.status(200).json({

@@ -13,6 +13,7 @@ import ChecksheetMasterPage from "./app/(app)/admin/checksheet-master/page";
 import DepartmentMasterPage from "./app/(app)/admin/department-master/page";
 import RoleMasterPage from "./app/(app)/admin/role-master/page";
 import UserMasterPage from "./app/(app)/admin/user-master/page";
+import ActivityMappingPage from "./app/(app)/admin/activity-mapping/page";
 import QualityPage from "./app/(app)/quality/page";
 import DigitalChecksheetPage from "./app/(app)/quality/digital-checksheet/page";
 import DigitalChecksheetListPage from "./app/(app)/quality/digital-checksheet/list/page";
@@ -88,6 +89,11 @@ const routes = createBrowserRouter([
 				path: "admin/user-master",
 				element: <UserMasterPage />,
 				handle: { label: "USER MASTER" },
+			},
+			{
+				path: "admin/activity-mapping",
+				element: <ActivityMappingPage />,
+				handle: { label: "ACTIVITY MAPPING" },
 			},
 		],
 	},

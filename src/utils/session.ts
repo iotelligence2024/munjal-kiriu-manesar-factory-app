@@ -4,6 +4,16 @@ export type UserSession = {
     employee_name: string;
     department: string;
     role: string;
+    allowed_modules?: {
+        travel_requisition?: boolean;
+        travel_expense_statement?: boolean;
+        digital_checksheet?: boolean;
+        department_master?: boolean;
+        checksheet_master?: boolean;
+        role_master?: boolean;
+        user_master?: boolean;
+        activity_mapping?: boolean;
+    };
 };
 
 const SESSION_KEY = "user_session";

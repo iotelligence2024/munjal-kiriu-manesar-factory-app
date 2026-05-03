@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { useSession } from "../../context/SessionContext";
+import { getUserModuleAccess } from "../../../utils/access-control";
 
 type AdminRouteCard = {
 	title: string;
@@ -27,15 +29,30 @@ const adminCards: AdminRouteCard[] = [
 		title: "USER MASTER",
 		href: "/admin/user-master",
 	},
+	{
+		title: "ACTIVITY MAPPING",
+		href: "/admin/activity-mapping",
+	},
 ];
 
 export function AdminShell({ activeHref, children }: AdminShellProps) {
+	const { session } = useSession();
+	const moduleAccess = getUserModuleAccess(session);
+	const visibleAdminCards = adminCards.filter((card) => {
+		if (card.href === "/admin/department-master") return moduleAccess.department_master;
+		if (card.href === "/admin/checksheet-master") return moduleAccess.checksheet_master;
+		if (card.href === "/admin/role-master") return moduleAccess.role_master;
+		if (card.href === "/admin/user-master") return moduleAccess.user_master;
+		if (card.href === "/admin/activity-mapping") return moduleAccess.activity_mapping;
+		return true;
+	});
+
 	return (
 		<div className="dashboard-glass flex min-h-0 flex-1 flex-col overflow-hidden p-3 md:p-5">
 			<div className="rounded-[1.4rem] border border-[rgba(191,219,254,0.45)] bg-[linear-gradient(165deg,rgba(224,231,255,0.85),rgba(219,234,254,0.82))] p-3 md:p-4">
 				<div className="min-w-0 overflow-x-hidden">
 					<div className="grid min-w-0 gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-						{adminCards.map((item) => {
+						{visibleAdminCards.map((item) => {
 							const isActive = activeHref === item.href;
 
 							return (
@@ -54,6 +71,11 @@ export function AdminShell({ activeHref, children }: AdminShellProps) {
 							);
 						})}
 					</div>
+					{visibleAdminCards.length === 0 ? (
+						<div className="mt-3 rounded-xl border border-[rgba(245,158,11,0.28)] bg-[rgba(254,243,199,0.55)] px-4 py-3 text-sm text-amber-700">
+							No admin sub-modules are mapped for your department and role.
+						</div>
+					) : null}
 				</div>
 			</div>
 

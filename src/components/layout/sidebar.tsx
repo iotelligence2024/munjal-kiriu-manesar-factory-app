@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Users, LogOut, ShieldCheck, BadgeCheck } from "lucide-preact";
 import { clearSession } from "../../utils/session";
 import { useSession } from "../../app/context/SessionContext";
+import { getUserModuleAccess } from "../../utils/access-control";
 
 import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "../../components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
@@ -26,8 +27,27 @@ const navItems = [{
 export function AppSidebar() {
 	const { pathname } = useLocation();
 	const navigate = useNavigate();
-	const { setSessionState } = useSession();
+	const { setSessionState, session } = useSession();
 	const [hovered, setHovered] = useState<string | null>(null);
+	const moduleAccess = getUserModuleAccess(session);
+	const filteredNavItems = navItems.filter((item) => {
+		if (item.href === "/") {
+			return moduleAccess.travel_requisition || moduleAccess.travel_expense_statement;
+		}
+		if (item.href === "/quality") {
+			return moduleAccess.digital_checksheet;
+		}
+		if (item.href === "/admin") {
+			return (
+				moduleAccess.department_master ||
+				moduleAccess.checksheet_master ||
+				moduleAccess.role_master ||
+				moduleAccess.user_master ||
+				moduleAccess.activity_mapping
+			);
+		}
+		return true;
+	});
 
 	const handleSignOut = () => {
 		const ok = confirm("Sign out of the application?");
@@ -76,7 +96,7 @@ export function AppSidebar() {
 					"
 				>
 					<SidebarMenu className="flex w-full flex-col items-center justify-center gap-3">
-						{navItems.map((item) => {
+						{filteredNavItems.map((item) => {
 							const Icon = item.icon;
 							const isActive =
 								pathname === item.href ||

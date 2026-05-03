@@ -31,6 +31,7 @@ import {
 import clientLogo from "../assets/clientLogo.png";
 import { useSession } from "./context/SessionContext";
 import { setSession } from "../utils/session";
+import { getDefaultAuthorizedPath, isPathAuthorizedForSession, UNAUTHORIZED_ALERT_KEY } from "../utils/access-control";
 
 // const moduleHighlights = [
 // 	{ label: "Digital Checksheets", icon: CalendarCheck },
@@ -116,6 +117,15 @@ export default function LoginPage() {
 		username: "",
 		password: "",
 	});
+
+	useEffect(() => {
+		const state = location.state as { unauthorized?: boolean; unauthorizedMessage?: string } | undefined;
+		if (location.pathname === "/login" && state?.unauthorized && typeof window !== "undefined") {
+			window.alert(state.unauthorizedMessage ?? "Unauthorized access");
+			sessionStorage.removeItem(UNAUTHORIZED_ALERT_KEY);
+			navigate("/login", { replace: true });
+		}
+	}, [location.pathname, location.state, navigate]);
 
 	useEffect(() => {
 		const loadMasterOptions = async () => {
@@ -238,6 +248,7 @@ export default function LoginPage() {
 				department: data.department,
 				role: data.role,
 				employee_name: data.employee_name,
+				allowed_modules: data.allowed_modules ?? undefined,
 			};
 
 			setSession(sessionData);
@@ -247,7 +258,11 @@ export default function LoginPage() {
 				sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
 			}
 
-			navigate(getRedirectPath(), { replace: true });
+			const preferredRedirectPath = getRedirectPath();
+			const nextPath = isPathAuthorizedForSession(sessionData, preferredRedirectPath)
+				? preferredRedirectPath
+				: getDefaultAuthorizedPath(sessionData);
+			navigate(nextPath, { replace: true });
 		} catch (err) {
 			setError(
 				err instanceof TypeError
