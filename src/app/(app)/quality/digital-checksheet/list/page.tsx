@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession } from "../../../../context/SessionContext";
 import { Button } from "../../../../../components/ui/button";
 import {
@@ -71,6 +71,14 @@ type ApprovalHistoryEntry = {
 	actedAt: string;
 	remarks: string;
 	statusAfterAction: string;
+};
+
+type CheckPointFieldConfig = {
+	enable?: boolean;
+	name?: string;
+	sequence?: number;
+	input?: boolean;
+	mandatory?: boolean;
 };
 
 const summaryShellClassName =
@@ -256,6 +264,24 @@ const splitDepartments = (value: unknown) =>
 		.map((item) => normalizeDepartmentText(item))
 		.filter(Boolean);
 
+const withSrNoMapping = (mapping: Record<string, CheckPointFieldConfig>) => {
+	const hasSrNo = Object.keys(mapping).some(
+		(key) => key.trim().toLowerCase() === "sr-no"
+	);
+	if (hasSrNo) return mapping;
+
+	return {
+		"sr-no": {
+			enable: true,
+			name: "Sr No",
+			sequence: 0,
+			input: false,
+			mandatory: false,
+		},
+		...mapping,
+	};
+};
+
 const parseRangeToken = (token: string) => {
 	const match = token.match(/^\s*(-?\d+(?:\.\d+)?)\s*[-~]\s*(-?\d+(?:\.\d+)?)\s*$/);
 	if (!match) return null;
@@ -299,6 +325,7 @@ const shouldHighlightSubmittedCell = ({
 };
 
 export default function DigitalChecksheetListPage() {
+	const navigate = useNavigate();
 	const { session } = useSession();
 	const [searchParams] = useSearchParams();
 	const [items, setItems] = useState<ChecksheetItem[]>([]);
@@ -316,6 +343,7 @@ export default function DigitalChecksheetListPage() {
 
 	const lineName = searchParams.get("line-name") ?? "";
 	const date = searchParams.get("date") ?? "";
+	const checksheetIdFromQuery = searchParams.get("checksheet-id") ?? "";
 	const selectedMonthKey = getMonthKeyFromDate(date);
 	const selectedWeekKey = getWeekKey(date);
 
@@ -486,7 +514,9 @@ export default function DigitalChecksheetListPage() {
 	};
 
 	const visibleFields = useMemo(() => {
-		const mapping = selectedChecksheet?.["check-points-mapping"] ?? {};
+		const mapping = withSrNoMapping(
+			(selectedChecksheet?.["check-points-mapping"] ?? {}) as Record<string, CheckPointFieldConfig>
+		);
 
 		return Object.entries(mapping)
 			.filter(([, config]) => config?.enable)
@@ -499,7 +529,9 @@ export default function DigitalChecksheetListPage() {
 			return;
 		}
 
-		const mapping = selectedChecksheet["check-points-mapping"] ?? {};
+		const mapping = withSrNoMapping(
+			(selectedChecksheet["check-points-mapping"] ?? {}) as Record<string, CheckPointFieldConfig>
+		);
 		const savedEntry = selectedResolvedDataItem;
 		const sourceRows =
 			Array.isArray(savedEntry?.["check-points"]) && savedEntry["check-points"].length > 0
@@ -508,8 +540,11 @@ export default function DigitalChecksheetListPage() {
 
 		setSelectedRows(
 			Array.isArray(sourceRows)
-				? sourceRows.map((row) => {
+				? sourceRows.map((row, rowIndex) => {
 						const nextRow: Record<string, unknown> = { ...row };
+						if (nextRow["sr-no"] === undefined || nextRow["sr-no"] === null || String(nextRow["sr-no"]).trim() === "") {
+							nextRow["sr-no"] = String(rowIndex + 1);
+						}
 
 						Object.entries(mapping).forEach(([key, config]) => {
 							if (!config?.input) {
@@ -531,7 +566,48 @@ export default function DigitalChecksheetListPage() {
 		setSelectedChecksheetId(item.id);
 		setValidationError(null);
 		setMessage(null);
+
+		const nextQuery = new URLSearchParams(searchParams);
+		nextQuery.set("checksheet-id", item.id);
+		navigate(`/quality/digital-checksheet/list?${nextQuery.toString()}`, { replace: true });
 	};
+
+	useEffect(() => {
+		if (filteredItems.length === 0) {
+			setSelectedChecksheetId("");
+			return;
+		}
+
+		const hasQueryChecksheet =
+			checksheetIdFromQuery &&
+			filteredItems.some((item) => item.id === checksheetIdFromQuery);
+
+		if (hasQueryChecksheet) {
+			if (selectedChecksheetId !== checksheetIdFromQuery) {
+				setSelectedChecksheetId(checksheetIdFromQuery);
+			}
+			return;
+		}
+
+		const hasCurrentSelection = filteredItems.some((item) => item.id === selectedChecksheetId);
+		if (hasCurrentSelection) {
+			return;
+		}
+
+		const fallbackId = filteredItems[0]?.id ?? "";
+		if (!fallbackId) return;
+
+		setSelectedChecksheetId(fallbackId);
+		const nextQuery = new URLSearchParams(searchParams);
+		nextQuery.set("checksheet-id", fallbackId);
+		navigate(`/quality/digital-checksheet/list?${nextQuery.toString()}`, { replace: true });
+	}, [
+		filteredItems,
+		checksheetIdFromQuery,
+		selectedChecksheetId,
+		searchParams,
+		navigate,
+	]);
 
 	const handleDetailCellChange = (rowIndex: number, key: string, value: string) => {
 		if (isReadOnlyChecksheet) return;

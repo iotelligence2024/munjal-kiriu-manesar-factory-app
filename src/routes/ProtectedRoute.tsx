@@ -3,7 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useSession } from "../app/context/SessionContext";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { isPathAuthorizedForSession, UNAUTHORIZED_ALERT_KEY } from "../utils/access-control";
+import { getDefaultAuthorizedPath, isPathAuthorizedForSession, UNAUTHORIZED_ALERT_KEY } from "../utils/access-control";
 
 const POST_LOGIN_REDIRECT_KEY = "post_login_redirect";
 
@@ -48,10 +48,15 @@ export default function ProtectedRoute({
         );
     }
 
+    const defaultAuthorizedPath = getDefaultAuthorizedPath(session);
+    if (location.pathname === "/" && defaultAuthorizedPath !== "/") {
+        return <Navigate to={defaultAuthorizedPath} replace />;
+    }
+
     if (isUnauthorizedForPath) {
         return (
             <Navigate
-                to="/"
+                to={defaultAuthorizedPath}
                 replace
                 state={{
                     unauthorized: true,

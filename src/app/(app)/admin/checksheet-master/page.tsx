@@ -76,14 +76,15 @@ type FormState = {
 };
 
 const defaultMappingFields: MappingFieldState[] = [
-	{ id: "inspection-items", key: "inspection-items", name: "Inspection Items", enable: true, sequence: 1, input: false, mandatory: false },
-	{ id: "standard", key: "standard", name: "Standard", enable: true, sequence: 2, input: false, mandatory: false },
-	{ id: "method", key: "method", name: "Method", enable: true, sequence: 3, input: false, mandatory: false },
-	{ id: "frequency", key: "frequency", name: "Frequency", enable: true, sequence: 4, input: false, mandatory: false },
-	{ id: "department", key: "department", name: "Department", enable: true, sequence: 5, input: false, mandatory: false },
-	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 6, input: false, mandatory: false },
-	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 7, input: true, mandatory: false },
-	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 8, input: true, mandatory: false },
+	{ id: "sr-no", key: "sr-no", name: "Sr No", enable: true, sequence: 1, input: false, mandatory: false },
+	{ id: "inspection-items", key: "inspection-items", name: "Inspection Items", enable: true, sequence: 2, input: false, mandatory: false },
+	{ id: "standard", key: "standard", name: "Standard", enable: true, sequence: 3, input: false, mandatory: false },
+	{ id: "method", key: "method", name: "Method", enable: true, sequence: 4, input: false, mandatory: false },
+	{ id: "frequency", key: "frequency", name: "Frequency", enable: true, sequence: 5, input: false, mandatory: false },
+	{ id: "department", key: "department", name: "Department", enable: true, sequence: 6, input: false, mandatory: false },
+	{ id: "responsibility", key: "responsibility", name: "Responsibility", enable: true, sequence: 7, input: false, mandatory: false },
+	{ id: "judgment", key: "judgment", name: "Judgment", enable: true, sequence: 8, input: true, mandatory: false },
+	{ id: "remarks", key: "remarks", name: "Remarks", enable: true, sequence: 9, input: true, mandatory: false },
 ];
 
 const emptyForm = (): FormState => ({
@@ -194,6 +195,20 @@ const mappingToRows = (
 	);
 
 	const hasDepartment = rows.some((row) => row.key.trim().toLowerCase() === "department");
+	const hasSrNo = rows.some((row) => row.key.trim().toLowerCase() === "sr-no");
+	if (!hasSrNo) {
+		rows.push(
+			createMappingField(0.5, {
+				id: "sr-no",
+				key: "sr-no",
+				name: "Sr No",
+				enable: true,
+				input: false,
+				mandatory: false,
+			})
+		);
+	}
+
 	if (!hasDepartment) {
 		const responsibilityRow = rows.find(
 			(row) => row.key.trim().toLowerCase() === "responsibility"
@@ -564,13 +579,17 @@ export default function ChecksheetMasterPage() {
 			{}
 		);
 
-		const checkPointPayload = checkPoints.map((row) => {
+		const checkPointPayload = checkPoints.map((row, index) => {
 			const entry: Record<string, unknown> = {
 				enable: Boolean(row.enable),
 			};
 
 			enabledMappingFields.forEach((field) => {
 				const fieldKey = field.key.trim();
+				if (fieldKey === "sr-no") {
+					entry[fieldKey] = String(index + 1);
+					return;
+				}
 				const rawValue = typeof row[fieldKey] === "string" ? String(row[fieldKey]).trim() : "";
 				entry[fieldKey] =
 					fieldKey === "judgment"
@@ -876,7 +895,14 @@ export default function ChecksheetMasterPage() {
 								<tr key={row.id} className="odd:bg-slate-50/40 even:bg-white/90">
 										{enabledMappingFields.map((field) => (
 										<td key={`${row.id}-${field.id}`} className={tableCellClassName}>
-											{field.key === "inspection-items" || field.key === "standard" ? (
+											{field.key === "sr-no" ? (
+												<Input
+													value={String(index + 1)}
+													disabled
+													className={tableInputClassName}
+													style={flatInputStyle}
+												/>
+											) : field.key === "inspection-items" || field.key === "standard" ? (
 												<AutoGrowTextarea
 													value={typeof row[field.key] === "string" ? String(row[field.key]) : ""}
 													onChange={(value) => handleCheckPointChange(row.id, field.key, value)}

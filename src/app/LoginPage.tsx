@@ -259,9 +259,12 @@ export default function LoginPage() {
 			}
 
 			const preferredRedirectPath = getRedirectPath();
-			const nextPath = isPathAuthorizedForSession(sessionData, preferredRedirectPath)
-				? preferredRedirectPath
-				: getDefaultAuthorizedPath(sessionData);
+			const nextPath =
+				preferredRedirectPath === "/"
+					? getDefaultAuthorizedPath(sessionData)
+					: isPathAuthorizedForSession(sessionData, preferredRedirectPath)
+						? preferredRedirectPath
+						: getDefaultAuthorizedPath(sessionData);
 			navigate(nextPath, { replace: true });
 		} catch (err) {
 			setError(

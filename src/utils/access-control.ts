@@ -117,14 +117,15 @@ export const getDefaultAuthorizedPath = (session: UserSession | null | undefined
 
 	const access = getUserModuleAccess(session);
 
-	if (access.travel_requisition) return "/hr/travel-requisition-form";
-	if (access.travel_expense_statement) return "/hr/travel-expense-statement";
-	if (access.digital_checksheet) return "/quality/digital-checksheet";
-	if (access.department_master) return "/admin/department-master";
-	if (access.checksheet_master) return "/admin/checksheet-master";
-	if (access.role_master) return "/admin/role-master";
-	if (access.user_master) return "/admin/user-master";
-	if (access.activity_mapping) return "/admin/activity-mapping";
+	if (access.travel_requisition || access.travel_expense_statement) return "/";
+	if (access.digital_checksheet) return "/quality";
+	if (
+		access.department_master ||
+		access.checksheet_master ||
+		access.role_master ||
+		access.user_master ||
+		access.activity_mapping
+	) return "/admin";
 
 	return "/";
 };
