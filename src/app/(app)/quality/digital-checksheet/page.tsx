@@ -22,6 +22,11 @@ type ChecksheetItem = {
 	status: string;
 	createdAt?: string;
 	authorization?: Record<string, Record<string, { enable: boolean; frequency: string }>>;
+	"check-points-mapping"?: Record<
+		string,
+		{ enable: boolean; name: string; sequence: number; input: boolean; mandatory?: boolean }
+	>;
+	"check-points"?: Array<Record<string, unknown>>;
 };
 
 type ChecksheetDataItem = {
@@ -44,6 +49,7 @@ type ChecksheetDataItem = {
 			remarks: string;
 		}
 	>;
+	"check-points"?: Array<Record<string, unknown>>;
 	updatedAt?: string;
 	createdAt?: string;
 };
@@ -55,6 +61,10 @@ const sectionClassName =
 const inputShellClassName =
 	"overflow-hidden rounded-[1rem] border border-[rgba(15,23,42,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.9))] px-4";
 const fieldLabelClassName = "text-sm font-medium text-[#4d5560]";
+const monthlyFixedColumnWidth = 170;
+const monthlyStickyDescriptorKeys = new Set(["sr-no", "inspection-items", "standard", "method"]);
+const getMonthlyDescriptorWidth = (key: string) =>
+	key.trim().toLowerCase() === "sr-no" ? 84 : monthlyFixedColumnWidth;
 
 const monthLabels = [
 	"January",
@@ -78,6 +88,33 @@ const buildMonthValue = (date: Date) =>
 
 const formatDisplayDate = (date: Date) =>
 	`${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()}`;
+
+const formatDisplayDateTime = (value: string) => {
+	if (!value) return "-";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+const getWeekStartDate = (value: string) => {
+	const parsedDate = parseDisplayDate(value);
+	if (!parsedDate) return null;
+	const start = new Date(parsedDate);
+	const day = start.getDay();
+	const diff = day === 0 ? -6 : 1 - day;
+	start.setDate(start.getDate() + diff);
+	start.setHours(0, 0, 0, 0);
+	return start;
+};
+
+const getWeekEndDate = (value: string) => {
+	const weekStart = getWeekStartDate(value);
+	if (!weekStart) return null;
+	const end = new Date(weekStart);
+	end.setDate(end.getDate() + 6);
+	end.setHours(23, 59, 59, 999);
+	return end;
+};
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
@@ -143,6 +180,7 @@ export default function DigitalChecksheetPage() {
 		return sessionStorage.getItem(DIGITAL_CHECKSHEET_LINE_STORAGE_KEY) ?? "";
 	});
 	const [selectedMonth, setSelectedMonth] = useState(buildMonthValue(new Date()));
+	const [selectedMonthlyChecksheetId, setSelectedMonthlyChecksheetId] = useState("");
 
 	useEffect(() => {
 		const loadChecksheets = async () => {
@@ -228,6 +266,298 @@ export default function DigitalChecksheetPage() {
 			),
 		[items, selectedLineName]
 	);
+
+	useEffect(() => {
+		if (visibleChecksheets.length === 0) {
+			setSelectedMonthlyChecksheetId("");
+			return;
+		}
+
+		const exists = visibleChecksheets.some((item) => item.id === selectedMonthlyChecksheetId);
+		if (!exists) {
+			setSelectedMonthlyChecksheetId(visibleChecksheets[0].id);
+		}
+	}, [visibleChecksheets, selectedMonthlyChecksheetId]);
+
+	const selectedMonthlyChecksheet = useMemo(
+		() => visibleChecksheets.find((item) => item.id === selectedMonthlyChecksheetId) ?? null,
+		[visibleChecksheets, selectedMonthlyChecksheetId]
+	);
+
+	const monthlyDays = useMemo(() => {
+		const [yearText, monthText] = selectedMonth.split("-");
+		const year = Number(yearText);
+		const monthIndex = Number(monthText) - 1;
+		const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+		return Array.from({ length: daysInMonth }, (_, index) => index + 1);
+	}, [selectedMonth]);
+
+	const monthlyMandatoryFields = useMemo(() => {
+		const mapping = selectedMonthlyChecksheet?.["check-points-mapping"] ?? {};
+		return Object.entries(mapping)
+			.filter(([, config]) => Boolean(config?.enable) && Boolean(config?.input) && Boolean(config?.mandatory))
+			.sort((first, second) => Number(first[1].sequence ?? 0) - Number(second[1].sequence ?? 0))
+			.map(([key]) => key);
+	}, [selectedMonthlyChecksheet]);
+
+	const monthlyDescriptorFields = useMemo(() => {
+		const mapping = selectedMonthlyChecksheet?.["check-points-mapping"] ?? {};
+		const descriptorFields = Object.entries(mapping)
+			.filter(([, config]) => Boolean(config?.enable) && !Boolean(config?.input))
+			.sort((first, second) => Number(first[1].sequence ?? 0) - Number(second[1].sequence ?? 0))
+			.map(([key, config]) => ({
+				key,
+				label: config?.name || key,
+			}));
+		const hasSrNo = descriptorFields.some((field) => field.key.trim().toLowerCase() === "sr-no");
+		if (!hasSrNo) {
+			return [{ key: "sr-no", label: "Sr No" }, ...descriptorFields];
+		}
+		return descriptorFields;
+	}, [selectedMonthlyChecksheet]);
+
+	const monthlyStickyOffsets = useMemo(() => {
+		let offset = 0;
+		const offsets: Record<string, number> = {};
+
+		monthlyDescriptorFields.forEach((field) => {
+			const normalizedKey = field.key.trim().toLowerCase();
+			if (monthlyStickyDescriptorKeys.has(normalizedKey)) {
+				offsets[field.key] = offset;
+				offset += getMonthlyDescriptorWidth(field.key);
+			}
+		});
+
+		return offsets;
+	}, [monthlyDescriptorFields]);
+
+	const monthlyRows = useMemo(() => {
+		if (!selectedMonthlyChecksheet) return [];
+		const rows = Array.isArray(selectedMonthlyChecksheet["check-points"])
+			? selectedMonthlyChecksheet["check-points"]
+			: [];
+
+		return rows.map((row, index) => {
+			const srNo = String(row?.["sr-no"] ?? index + 1);
+			const inspectionItem = String(row?.["inspection-items"] ?? row?.["inspection_item"] ?? "");
+			const label = inspectionItem || `Checkpoint ${index + 1}`;
+			return {
+				index,
+				label: `${srNo}. ${label}`,
+			};
+		});
+	}, [selectedMonthlyChecksheet]);
+
+	const monthlyDataByDate = useMemo(() => {
+		if (!selectedMonthlyChecksheet) return {};
+
+		const byDate: Record<string, ChecksheetDataItem> = {};
+		dataItems
+			.filter((item) => item["checksheet-id"] === selectedMonthlyChecksheet.id)
+			.forEach((item) => {
+				const current = byDate[item.date];
+				const currentTime = new Date(current?.updatedAt ?? current?.createdAt ?? "").getTime();
+				const nextTime = new Date(item.updatedAt ?? item.createdAt ?? "").getTime();
+				if (!current || nextTime >= currentTime) {
+					byDate[item.date] = item;
+				}
+			});
+
+		return byDate;
+	}, [dataItems, selectedMonthlyChecksheet]);
+
+	const monthlyApprovalViewRows = useMemo(() => {
+		if (!selectedMonthlyChecksheet) return [];
+		const monthKey = selectedMonth.match(/^(\d{4})-(\d{2})$/)
+			? `${selectedMonth.slice(5, 7)}-${selectedMonth.slice(0, 4)}`
+			: "";
+		if (!monthKey) return [];
+		const [yearText, monthText] = selectedMonth.split("-");
+		const selectedYear = Number(yearText);
+		const selectedMonthIndex = Number(monthText) - 1;
+		const daysInMonth = new Date(selectedYear, selectedMonthIndex + 1, 0).getDate();
+		const checksheetCreatedDate = getChecksheetCreatedDate(selectedMonthlyChecksheet);
+		const weekKeysInMonth = Array.from(
+			new Set(
+				Array.from({ length: daysInMonth }, (_, idx) =>
+					getWeekKey(formatDisplayDate(new Date(selectedYear, selectedMonthIndex, idx + 1)))
+				).filter(Boolean)
+			)
+		);
+		const availableWeekKeys = Array.from(
+			new Set(
+				Array.from({ length: daysInMonth }, (_, idx) => idx + 1)
+					.filter((day) => {
+						const currentDate = new Date(selectedYear, selectedMonthIndex, day);
+						if (!checksheetCreatedDate) return true;
+						return startOfDay(currentDate).getTime() >= checksheetCreatedDate.getTime();
+					})
+					.map((day) => getWeekKey(formatDisplayDate(new Date(selectedYear, selectedMonthIndex, day))))
+					.filter(Boolean)
+			)
+		);
+
+		const stageMeta = new Map<string, { department: string; role: string; frequency: string }>();
+		Object.entries(selectedMonthlyChecksheet.authorization ?? {}).forEach(([department, roles]) => {
+			Object.entries(roles ?? {}).forEach(([role, details]) => {
+				if (!details?.enable) return;
+				const frequency = String(details?.frequency ?? "").trim() || "Daily";
+				if (!["weekly", "monthly"].includes(frequency.toLowerCase())) return;
+				const normalizedDepartment = department
+					.trim()
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, "_")
+					.replace(/^_+|_+$/g, "");
+				const normalizedRole = role
+					.trim()
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, "_")
+					.replace(/^_+|_+$/g, "");
+				stageMeta.set(`${normalizedDepartment}__${normalizedRole}`, { department, role, frequency });
+			});
+		});
+
+		const monthItems = dataItems.filter(
+			(item) =>
+				item["checksheet-id"] === selectedMonthlyChecksheet.id &&
+				String(item.month ?? "").trim() === monthKey
+		);
+		const allChecksheetItems = dataItems.filter(
+			(item) => item["checksheet-id"] === selectedMonthlyChecksheet.id
+		);
+		const rows: Array<{
+			period: string;
+			department: string;
+			role: string;
+			frequency: string;
+			status: string;
+			approvedBy: string;
+			approvedAt: string;
+			remarks: string;
+			sourceDate: string;
+		}> = [];
+
+		const buildRow = (
+			meta: { department: string; role: string; frequency: string },
+			period: string,
+			sourceDate: string,
+			stageSnapshot:
+				| {
+					action: string;
+					approved?: boolean;
+					queried?: boolean;
+					approvedByName?: string;
+					approvedByUsername?: string;
+					approvedAt?: string;
+					remarks?: string;
+				  }
+				| undefined
+		) => {
+			const action = String(stageSnapshot?.action ?? "").trim().toLowerCase();
+			const status = stageSnapshot?.approved
+				? "APPROVED"
+				: stageSnapshot?.queried
+					? "QUERY RAISED"
+					: action === "approve"
+						? "APPROVED"
+						: action === "query"
+							? "QUERY RAISED"
+							: "PENDING";
+			return {
+				period,
+				department: meta.department,
+				role: meta.role,
+				frequency: meta.frequency,
+				status,
+				approvedBy: stageSnapshot?.approvedByName || stageSnapshot?.approvedByUsername || "-",
+				approvedAt: stageSnapshot?.approvedAt ?? "",
+				remarks: stageSnapshot?.remarks ?? "",
+				sourceDate,
+			};
+		};
+
+		stageMeta.forEach((meta, stageKey) => {
+			const frequency = meta.frequency.trim().toLowerCase();
+			if (frequency === "weekly") {
+				const weeksToShow = availableWeekKeys.length > 0 ? availableWeekKeys : weekKeysInMonth;
+				weeksToShow.forEach((weekKey, index) => {
+					const weekItems = allChecksheetItems.filter((item) => getWeekKey(item.date) === weekKey);
+					const weekCandidates = weekItems
+						.map((item) => ({
+							item,
+							stage: item.approvalFlow?.[stageKey],
+						}))
+						.filter(({ stage }) =>
+							Boolean(
+								stage &&
+								(
+									stage.approved ||
+									stage.queried ||
+									String(stage.action ?? "").trim()
+								)
+							)
+						);
+					const latestStage = weekCandidates.reduce<typeof weekCandidates[number] | undefined>(
+						(acc, current) => {
+							const accTime = new Date(acc?.item.updatedAt ?? acc?.item.createdAt ?? "").getTime();
+							const currentTime = new Date(current.item.updatedAt ?? current.item.createdAt ?? "").getTime();
+							return !acc || currentTime >= accTime ? current : acc;
+						},
+						undefined
+					)?.stage;
+					const fallbackDate = formatDisplayDate(new Date(selectedYear, selectedMonthIndex, Math.min(index * 7 + 1, daysInMonth)));
+					const anchorDate = weekItems[0]?.date || fallbackDate;
+					const startDate = getWeekStartDate(anchorDate);
+					const endDate = getWeekEndDate(anchorDate);
+					const periodLabel = startDate && endDate
+						? `${formatDisplayDate(startDate)} to ${formatDisplayDate(endDate)}`
+						: `Week ${index + 1}`;
+					rows.push(buildRow(meta, periodLabel, weekItems[0]?.date ?? "", latestStage));
+				});
+				return;
+			}
+
+			const monthCandidates = monthItems
+				.map((item) => ({
+					item,
+					stage: item.approvalFlow?.[stageKey],
+				}))
+				.filter(({ stage }) =>
+					Boolean(
+						stage &&
+						(
+							stage.approved ||
+							stage.queried ||
+							String(stage.action ?? "").trim()
+						)
+					)
+				);
+			const latestMonthStage = monthCandidates.reduce<typeof monthCandidates[number] | undefined>(
+				(acc, current) => {
+					const accTime = new Date(acc?.item.updatedAt ?? acc?.item.createdAt ?? "").getTime();
+					const currentTime = new Date(current.item.updatedAt ?? current.item.createdAt ?? "").getTime();
+					return !acc || currentTime >= accTime ? current : acc;
+				},
+				undefined
+			)?.stage;
+			const monthStart = new Date(selectedYear, selectedMonthIndex, 1);
+			const monthEnd = new Date(selectedYear, selectedMonthIndex, daysInMonth);
+			rows.push(
+				buildRow(
+					meta,
+					`${formatDisplayDate(monthStart)} to ${formatDisplayDate(monthEnd)}`,
+					monthItems[0]?.date ?? "",
+					latestMonthStage
+				)
+			);
+		});
+
+		return rows.sort((a, b) => {
+			const aTime = new Date(a.approvedAt || "").getTime();
+			const bTime = new Date(b.approvedAt || "").getTime();
+			return bTime - aTime;
+		});
+	}, [dataItems, selectedMonthlyChecksheet, selectedMonth]);
 
 	const approvedCountByDate = useMemo(() => {
 		const relevantDataItems = dataItems.filter((item) =>
@@ -513,6 +843,215 @@ export default function DigitalChecksheetPage() {
 								);
 							})()
 						))}
+					</div>
+				</div>
+
+				<div className={sectionClassName}>
+					<div className="mb-4 grid gap-4 md:grid-cols-2 md:items-end">
+						<div className="space-y-2">
+							<Label className={fieldLabelClassName}>Monthly Checksheet View</Label>
+							<div className={inputShellClassName}>
+								<Select
+									value={selectedMonthlyChecksheetId || "__empty__"}
+									onValueChange={(value) =>
+										setSelectedMonthlyChecksheetId(value === "__empty__" ? "" : value)
+									}
+									disabled={visibleChecksheets.length === 0}
+								>
+									<SelectTrigger className="h-10 sm:h-11 border-0 bg-transparent px-0 text-sm text-[#17181d] shadow-none focus:ring-0 focus:ring-offset-0">
+										<SelectValue placeholder="Select checksheet" />
+									</SelectTrigger>
+									<SelectContent>
+										{visibleChecksheets.length === 0 ? (
+											<SelectItem value="__empty__">No checksheet available</SelectItem>
+										) : (
+											visibleChecksheets.map((item) => (
+												<SelectItem key={item.id} value={item.id}>
+													{item.name}
+												</SelectItem>
+											))
+										)}
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
+					</div>
+
+					<div className="overflow-auto rounded-xl border border-slate-300 bg-white/80">
+						<table className="w-full min-w-[1200px] table-auto border-collapse text-sm">
+							<thead>
+								<tr className="bg-slate-100">
+									{monthlyDescriptorFields.map((field) => (
+										<th
+											key={`descriptor-head-${field.key}`}
+											className={`${monthlyStickyDescriptorKeys.has(field.key.trim().toLowerCase()) ? "sticky z-20" : ""} border border-slate-300 bg-slate-100 px-3 py-2.5 text-left font-semibold text-slate-700`}
+											style={monthlyStickyDescriptorKeys.has(field.key.trim().toLowerCase())
+												? {
+													left: `${monthlyStickyOffsets[field.key] ?? 0}px`,
+													minWidth: `${getMonthlyDescriptorWidth(field.key)}px`,
+													width: `${getMonthlyDescriptorWidth(field.key)}px`,
+												}
+												: undefined}
+										>
+											{field.label}
+										</th>
+									))}
+									{monthlyDays.map((day) => (
+										<th
+											key={`day-${day}`}
+											className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700"
+										>
+											{day}
+										</th>
+									))}
+								</tr>
+							</thead>
+							<tbody>
+								{!selectedMonthlyChecksheet || monthlyRows.length === 0 ? (
+									<tr>
+										<td
+											colSpan={monthlyDays.length + Math.max(monthlyDescriptorFields.length, 1)}
+											className="px-4 py-8 text-center text-slate-500"
+										>
+											No checkpoint rows available for selected checksheet.
+										</td>
+									</tr>
+								) : monthlyMandatoryFields.length === 0 ? (
+									<tr>
+										<td
+											colSpan={monthlyDays.length + Math.max(monthlyDescriptorFields.length, 1)}
+											className="px-4 py-8 text-center text-slate-500"
+										>
+											No mandatory input fields configured in checksheet master.
+										</td>
+									</tr>
+								) : (
+									monthlyRows.map((row) => (
+										<tr key={`monthly-row-${row.index}`} className="odd:bg-slate-50/40 even:bg-white/90">
+											{monthlyDescriptorFields.map((field) => {
+												const sourceRow = selectedMonthlyChecksheet?.["check-points"]?.[row.index] as Record<string, unknown> | undefined;
+												const rawDescriptorValue =
+													field.key.trim().toLowerCase() === "sr-no"
+														? sourceRow?.[field.key] ?? String(row.index + 1)
+														: sourceRow?.[field.key];
+												const descriptorValue = Array.isArray(rawDescriptorValue)
+													? rawDescriptorValue.join(", ")
+													: String(rawDescriptorValue ?? "");
+												return (
+													<td
+														key={`descriptor-${field.key}-${row.index}`}
+														className={`${monthlyStickyDescriptorKeys.has(field.key.trim().toLowerCase()) ? "sticky z-10" : ""} border border-slate-200 bg-white px-3 py-2.5 text-left text-slate-800`}
+														style={monthlyStickyDescriptorKeys.has(field.key.trim().toLowerCase())
+															? {
+																left: `${monthlyStickyOffsets[field.key] ?? 0}px`,
+																minWidth: `${getMonthlyDescriptorWidth(field.key)}px`,
+																width: `${getMonthlyDescriptorWidth(field.key)}px`,
+															}
+															: undefined}
+													>
+														{descriptorValue || "-"}
+													</td>
+												);
+											})}
+											{monthlyDays.map((day) => {
+												const [yearText, monthText] = selectedMonth.split("-");
+												const dateKey = `${pad(day)}-${monthText}-${yearText}`;
+												const dataForDay = monthlyDataByDate[dateKey];
+												const rowValues = Array.isArray(dataForDay?.["check-points"])
+													? dataForDay["check-points"]?.[row.index]
+													: null;
+												const cellValues = monthlyMandatoryFields
+													.map((fieldKey) => {
+														const rawValue = (rowValues as Record<string, unknown> | null)?.[fieldKey];
+														const value = Array.isArray(rawValue)
+															? rawValue.join(", ")
+															: String(rawValue ?? "").trim();
+														return value;
+													})
+													.filter(Boolean);
+
+												return (
+													<td
+														key={`monthly-${row.index}-${day}`}
+														className="border border-slate-200 px-2 py-2 text-center text-xs text-slate-700"
+													>
+														{cellValues.length > 0 ? cellValues.join(" | ") : "-"}
+													</td>
+												);
+											})}
+										</tr>
+									))
+								)}
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div className={sectionClassName}>
+					<div className="mb-3 flex items-center justify-between gap-3">
+						<h2 className="text-base font-semibold text-slate-800">Monthly Approval Visibility</h2>
+					</div>
+					<div className="overflow-auto rounded-xl border border-slate-300 bg-white/80">
+						<table className="w-full min-w-[920px] table-auto border-collapse text-sm">
+							<thead>
+								<tr className="bg-slate-100">
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Period</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Department</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Role</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Frequency</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Status</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Done By</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Done On</th>
+									<th className="border border-slate-300 px-3 py-2.5 text-center font-semibold text-slate-700">Remarks</th>
+								</tr>
+							</thead>
+							<tbody>
+								{!selectedMonthlyChecksheet ? (
+									<tr>
+										<td colSpan={8} className="px-4 py-8 text-center text-slate-500">Select a checksheet to view approvals.</td>
+									</tr>
+								) : monthlyApprovalViewRows.length === 0 ? (
+									<tr>
+										<td colSpan={8} className="px-4 py-8 text-center text-slate-500">No weekly/monthly approvals recorded for this month.</td>
+									</tr>
+								) : (
+									monthlyApprovalViewRows.map((row, index) => (
+										<tr
+											key={`${row.period}-${row.department}-${row.role}-${index}`}
+											className={`odd:bg-slate-50/40 even:bg-white/90 ${
+												row.status !== "PENDING" ? "cursor-pointer hover:bg-sky-50/70" : ""
+											}`}
+											onClick={() => {
+												if (
+													row.status === "PENDING" ||
+													!selectedMonthlyChecksheet ||
+													!selectedLineName ||
+													!row.sourceDate
+												) {
+													return;
+												}
+												navigate(
+													`/quality/digital-checksheet/list?line-name=${encodeURIComponent(selectedLineName)}&date=${encodeURIComponent(row.sourceDate)}&checksheet-id=${encodeURIComponent(selectedMonthlyChecksheet.id)}`
+												);
+											}}
+										>
+											<td
+												className="border border-slate-200 px-3 py-2.5 text-center text-slate-800"
+											>
+												{row.period}
+											</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.department}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.role}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.frequency}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.status}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.approvedBy}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{formatDisplayDateTime(row.approvedAt)}</td>
+											<td className="border border-slate-200 px-3 py-2.5 text-center text-slate-800">{row.remarks || "-"}</td>
+										</tr>
+									))
+								)}
+							</tbody>
+						</table>
 					</div>
 				</div>
 			</div>

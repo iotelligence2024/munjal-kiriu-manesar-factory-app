@@ -956,11 +956,17 @@ function sanitizeChecksheetData(document) {
 		(entry) => String(entry?.action ?? "").trim().toLowerCase() === "submitted"
 	);
 	const firstKnownStage = String(approvalHistory[0]?.stage ?? "").trim();
+	const firstKnownActorName = String(
+		approvalHistory.find((entry) => String(entry?.actorName ?? "").trim())?.actorName ?? ""
+	).trim();
+	const firstKnownActorUsername = String(
+		approvalHistory.find((entry) => String(entry?.actorUsername ?? "").trim())?.actorUsername ?? ""
+	).trim();
 	const fallbackSubmittedEntry = {
 		stage: firstKnownStage || "submitted",
 		action: "submitted",
-		actorUsername: "",
-		actorName: document["checksheet-name"] ?? "",
+		actorUsername: firstKnownActorUsername,
+		actorName: firstKnownActorName || firstKnownActorUsername,
 		actedAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : "",
 		remarks: "Checksheet submitted.",
 		statusAfterAction: "completed",
@@ -1854,6 +1860,7 @@ app.post("/api/checksheet-data", async (req, res) => {
 		const normalizedActorRole = String(actorRole ?? "").trim();
 		const normalizedActorUsername = String(actorUsername ?? "").trim().toLowerCase();
 		const normalizedActorName = String(actorName ?? "").trim();
+		const resolvedActorName = normalizedActorName || normalizedActorUsername;
 		const submitterStage =
 			normalizedActorDepartment && normalizedActorRole
 				? createApprovalStageKey(normalizedActorDepartment, normalizedActorRole)
@@ -1865,7 +1872,7 @@ app.post("/api/checksheet-data", async (req, res) => {
 			stage: submitterStage,
 			action: "submitted",
 			actorUsername: normalizedActorUsername,
-			actorName: normalizedActorName || String(checksheetName ?? "").trim(),
+			actorName: resolvedActorName,
 			actedAt: new Date(),
 			remarks: "Checksheet submitted.",
 			statusAfterAction: "completed",
@@ -1879,7 +1886,7 @@ app.post("/api/checksheet-data", async (req, res) => {
 							stage: submitterStage,
 							action: "resubmitted",
 							actorUsername: normalizedActorUsername,
-							actorName: normalizedActorName || String(checksheetName ?? "").trim(),
+							actorName: resolvedActorName,
 							actedAt: new Date(),
 							remarks: "Checksheet resubmitted after query raised.",
 							statusAfterAction: "completed",

@@ -72,6 +72,12 @@ type ApprovalHistoryEntry = {
 	remarks: string;
 	statusAfterAction: string;
 };
+type ApprovalStageConfig = {
+	id: string;
+	department: string;
+	role: string;
+	frequency: string;
+};
 
 type CheckPointFieldConfig = {
 	enable?: boolean;
@@ -124,6 +130,11 @@ const formatDisplayDate = (value: string) => {
 	return value;
 };
 
+const formatDisplayDateFromDate = (value: Date) => {
+	const padPart = (part: number) => String(part).padStart(2, "0");
+	return `${padPart(value.getDate())}-${padPart(value.getMonth() + 1)}-${value.getFullYear()}`;
+};
+
 const formatDisplayDateTime = (value: string) => {
 	if (!value) return "-";
 
@@ -144,6 +155,32 @@ const parseDisplayDate = (value: string) => {
 	const match = value.match(/^(\d{2})-(\d{2})-(\d{4})$/);
 	if (!match) return null;
 	return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+};
+
+const getPeriodRangeLabel = (dateValue: string, frequency: string) => {
+	const parsedDate = parseDisplayDate(dateValue);
+	if (!parsedDate) return "-";
+
+	const start = new Date(parsedDate);
+	const end = new Date(parsedDate);
+	const normalizedFrequency = String(frequency ?? "").trim().toLowerCase();
+
+	if (normalizedFrequency === "weekly") {
+		const day = start.getDay();
+		const diff = day === 0 ? -6 : 1 - day;
+		start.setDate(start.getDate() + diff);
+		end.setTime(start.getTime());
+		end.setDate(start.getDate() + 6);
+		return `${formatDisplayDateFromDate(start)} to ${formatDisplayDateFromDate(end)}`;
+	}
+
+	if (normalizedFrequency === "monthly") {
+		start.setDate(1);
+		end.setMonth(parsedDate.getMonth() + 1, 0);
+		return `${formatDisplayDateFromDate(start)} to ${formatDisplayDateFromDate(end)}`;
+	}
+
+	return formatDisplayDateFromDate(parsedDate);
 };
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -264,6 +301,11 @@ const splitDepartments = (value: unknown) =>
 		.map((item) => normalizeDepartmentText(item))
 		.filter(Boolean);
 
+const normalizeFrequencyText = (value: unknown) =>
+	String(value ?? "")
+		.trim()
+		.toLowerCase();
+
 const withSrNoMapping = (mapping: Record<string, CheckPointFieldConfig>) => {
 	const hasSrNo = Object.keys(mapping).some(
 		(key) => key.trim().toLowerCase() === "sr-no"
@@ -346,6 +388,7 @@ export default function DigitalChecksheetListPage() {
 	const checksheetIdFromQuery = searchParams.get("checksheet-id") ?? "";
 	const selectedMonthKey = getMonthKeyFromDate(date);
 	const selectedWeekKey = getWeekKey(date);
+	const selectedDateValue = useMemo(() => parseDisplayDate(date), [date]);
 
 	useEffect(() => {
 		const loadChecksheets = async () => {
@@ -485,6 +528,45 @@ export default function DigitalChecksheetListPage() {
 		return stages;
 	}, [approvalStages, dataItems, selectedChecksheet, selectedWeekKey]);
 
+	const periodicApprovalStages = useMemo(
+		() =>
+			approvalStages.filter((stage) => {
+				const frequency = stage.frequency.trim().toLowerCase();
+				return frequency === "weekly" || frequency === "monthly";
+			}),
+		[approvalStages]
+	);
+
+	const getPeriodicStageSnapshots = (stage: ApprovalStageConfig) => {
+		if (!selectedChecksheet) return [];
+		const frequency = stage.frequency.trim().toLowerCase();
+		return dataItems
+			.filter((item) => {
+				if (item["checksheet-id"] !== selectedChecksheet.id) return false;
+				if (frequency === "weekly") return getWeekKey(item.date) === selectedWeekKey;
+				if (frequency === "monthly") return getMonthKeyFromDate(item.date) === selectedMonthKey;
+				return false;
+			})
+			.map((item) => {
+				const approvalFlowKey = getApprovalStageKey(stage.department, stage.role);
+				const stageSnapshot = item.approvalFlow?.[approvalFlowKey];
+				return { item, stageSnapshot };
+			})
+			.filter((entry) => Boolean(entry.stageSnapshot?.action));
+	};
+
+	const getPeriodicLatestSnapshot = (stage: ApprovalStageConfig) => {
+		const snapshots = getPeriodicStageSnapshots(stage);
+		if (snapshots.length === 0) return null;
+		return snapshots.reduce((latest, current) => {
+			const latestTime = new Date(latest.item.updatedAt ?? latest.item.createdAt ?? "").getTime();
+			const currentTime = new Date(current.item.updatedAt ?? current.item.createdAt ?? "").getTime();
+			return currentTime >= latestTime ? current : latest;
+		});
+	};
+
+ 
+
 	const isApprovalCompleted = useMemo(() => {
 		if (!selectedChecksheet || !selectedResolvedDataItem) return false;
 		if (selectedResolvedDataItem.approval === "approved") return true;
@@ -498,10 +580,63 @@ export default function DigitalChecksheetListPage() {
 					return isApprovalStageApproved(item, stage.department, stage.role);
 				});
 			}
+			if (stage.frequency.toLowerCase() === "monthly") {
+				return dataItems.some((item) => {
+					if (item["checksheet-id"] !== selectedChecksheet.id) return false;
+					if (getMonthKeyFromDate(item.date) !== selectedMonthKey) return false;
+					return isApprovalStageApproved(item, stage.department, stage.role);
+				});
+			}
 
 			return isApprovalStageApproved(selectedResolvedDataItem, stage.department, stage.role);
 		});
 	}, [approvalStages, dataItems, selectedChecksheet, selectedResolvedDataItem, selectedWeekKey]);
+
+	const getApprovalStageSnapshotByFrequency = (stage: ApprovalStageConfig) => {
+		if (!selectedChecksheet) return approvalStageDefaults;
+
+		const stageKey = getApprovalStageKey(stage.department, stage.role);
+		const frequency = stage.frequency.trim().toLowerCase();
+
+		if (frequency === "daily") {
+			return selectedResolvedDataItem?.approvalFlow?.[stageKey] ?? approvalStageDefaults;
+		}
+
+		const frequencyItems = dataItems.filter((item) => {
+			if (item["checksheet-id"] !== selectedChecksheet.id) return false;
+			if (frequency === "weekly") return getWeekKey(item.date) === selectedWeekKey;
+			if (frequency === "monthly") return getMonthKeyFromDate(item.date) === selectedMonthKey;
+			return false;
+		});
+
+		const decidedCandidates = frequencyItems
+			.map((item) => ({
+				item,
+				stage: item.approvalFlow?.[stageKey],
+			}))
+			.filter(({ stage }) =>
+				Boolean(
+					stage &&
+					(
+						stage.approved ||
+						stage.queried ||
+						String(stage.action ?? "").trim()
+					)
+				)
+			);
+
+		if (decidedCandidates.length === 0) {
+			return approvalStageDefaults;
+		}
+
+		const latest = decidedCandidates.reduce((acc, current) => {
+			const accTime = new Date(acc.item.updatedAt ?? acc.item.createdAt ?? "").getTime();
+			const currentTime = new Date(current.item.updatedAt ?? current.item.createdAt ?? "").getTime();
+			return currentTime >= accTime ? current : acc;
+		});
+
+		return latest.stage ?? approvalStageDefaults;
+	};
 
 	const approvalStageDefaults: ApprovalStage = {
 		approved: false,
@@ -662,9 +797,20 @@ export default function DigitalChecksheetListPage() {
 				const departmentAllowed =
 					acceptedDepartments.length === 0 ||
 					acceptedDepartments.includes(normalizedSessionDepartment);
-				return roleAllowed && departmentAllowed;
+				const rowFrequency =
+					row.frequency ??
+					selectedChecksheet?.["check-points"]?.[index]?.frequency ??
+					"";
+				const normalizedFrequency = normalizeFrequencyText(rowFrequency);
+				const isFrequencyDue =
+					!selectedDateValue ||
+					normalizedFrequency === "" ||
+					normalizedFrequency === "daily" ||
+					(normalizedFrequency === "weekly" && selectedDateValue.getDay() === 1) ||
+					(normalizedFrequency === "monthly" && selectedDateValue.getDate() === 1);
+				return roleAllowed && departmentAllowed && isFrequencyDue;
 			}),
-		[selectedRows, selectedChecksheet, normalizedSessionRole, normalizedSessionDepartment]
+		[selectedRows, selectedChecksheet, normalizedSessionRole, normalizedSessionDepartment, selectedDateValue]
 	);
 
 	const canEditAnyCheckpoint = useMemo(
@@ -737,6 +883,9 @@ export default function DigitalChecksheetListPage() {
 	const handleReview = () => {
 		if (!selectedChecksheet) return;
 		const missingFields = selectedRows.flatMap((row, rowIndex) =>
+			!(rowEditPermissions[rowIndex] ?? false)
+				? []
+				:
 			visibleFields.flatMap(([key, config]) => {
 				if (!config.input || !config.mandatory) {
 					return [];
@@ -815,6 +964,8 @@ export default function DigitalChecksheetListPage() {
 			setApprovalLoading(false);
 		}
 	};
+
+ 
 
 	return (
 		<div className="dashboard-glass flex min-h-0 flex-1 flex-col overflow-hidden p-3 md:p-5">
@@ -1088,6 +1239,58 @@ export default function DigitalChecksheetListPage() {
 								</Button>
 							</div>
 						) : null}
+
+						{periodicApprovalStages.length > 0 ? (
+							<div className="mt-6 rounded-xl border border-slate-200 bg-white/90 p-4">
+								<p className="mb-3 font-headline text-sm font-bold uppercase tracking-[0.14em] text-slate-700">
+									Periodic Approvals
+								</p>
+								<div className="overflow-auto rounded-lg border border-slate-200">
+									<table className="w-full min-w-[900px] table-auto border-collapse text-sm">
+										<thead>
+											<tr className="bg-slate-100">
+												<th className={tableHeadClassName}>Period</th>
+												<th className={tableHeadClassName}>Department</th>
+												<th className={tableHeadClassName}>Role</th>
+												<th className={tableHeadClassName}>Frequency</th>
+												<th className={tableHeadClassName}>Status</th>
+												<th className={tableHeadClassName}>Done By</th>
+												<th className={tableHeadClassName}>Done On</th>
+												<th className={tableHeadClassName}>Remarks</th>
+											</tr>
+										</thead>
+										<tbody>
+											{periodicApprovalStages.map((stage) => {
+												const latestSnapshot = getPeriodicLatestSnapshot(stage);
+												const periodicStage = latestSnapshot?.stageSnapshot ?? approvalStageDefaults;
+												return (
+													<tr key={`periodic-${stage.id}`} className="odd:bg-slate-50/40 even:bg-white/90">
+														<td className={tableCellClassName}>
+															{getPeriodRangeLabel(date, stage.frequency)}
+														</td>
+														<td className={tableCellClassName}>{stage.department}</td>
+														<td className={tableCellClassName}>{stage.role}</td>
+														<td className={tableCellClassName}>{stage.frequency}</td>
+														<td className={`${tableCellClassName} text-center`}>
+															<span className={getApprovalBadgeClassName(periodicStage)}>
+																{getApprovalBadgeLabel(periodicStage)}
+															</span>
+														</td>
+														<td className={tableCellClassName}>
+															{periodicStage.approvedByName || periodicStage.approvedByUsername || "-"}
+														</td>
+														<td className={tableCellClassName}>
+															{periodicStage.approvedAt ? formatDisplayDateTime(periodicStage.approvedAt) : "-"}
+														</td>
+														<td className={tableCellClassName}>{periodicStage.remarks || "-"}</td>
+													</tr>
+												);
+											})}
+										</tbody>
+									</table>
+								</div>
+							</div>
+						) : null}
 					</div>
 				) : null}
 
@@ -1101,14 +1304,11 @@ export default function DigitalChecksheetListPage() {
 								<div className="space-y-4">
 									{visibleApprovalStages.map((stage, index) => {
 										const approvalFlowKey = getApprovalStageKey(stage.department, stage.role);
-										const approvalStage =
-											selectedResolvedDataItem?.approvalFlow?.[approvalFlowKey] ?? approvalStageDefaults;
+										const approvalStage = getApprovalStageSnapshotByFrequency(stage);
 										const previousStagesApproved = visibleApprovalStages
 											.slice(0, index)
 											.every((previousStage) => {
-												const previousKey = getApprovalStageKey(previousStage.department, previousStage.role);
-												const previousApproval =
-													selectedResolvedDataItem?.approvalFlow?.[previousKey] ?? approvalStageDefaults;
+												const previousApproval = getApprovalStageSnapshotByFrequency(previousStage);
 												return Boolean(previousApproval.approved);
 											});
 										const canCurrentUserApprove =
